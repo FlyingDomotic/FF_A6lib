@@ -18,11 +18,12 @@
 #define MAX_SMS_NUMBER_LEN 20								//!< SMS number max length
 #define MAX_SMS_DATE_LEN 25									//!< SMS date max length
 #define MAX_SMS_MESSAGE_LEN 180								//!< SMS message max length
-#define MAX_ANSWER 250										//!< AT command answer max length
+#define MAX_ANSWER 200										//!< AT command answer max length
 #define DEFAULT_ANSWER "\r\nOK\r\n"							//!< AT command default answer
 #define SMS_READY_MSG "SMS Ready"							//!< SMS ready signal
 #define SMS_INDICATOR "+CMT: "								//!< SMS received indicator
 #define CSCA_INDICATOR "+CSCA:"								//!< SCA value indicator
+//#define A6LIB_KEEP_CR_LF									//!< Keep CR & LF in displayed messages (by default, thry're replaced by ".")
 
 // Enums
 #define A6_OK 0
@@ -110,6 +111,7 @@ private:
 	void enterRoutine(const char* routineName);
 	void readSmsHeader(const char* msg);
 	void readSmsMessage(const char* msg);
+	void cleanString(char* msg);
 
 	// Private variables
 	unsigned long startTime;								//!< Last command start time

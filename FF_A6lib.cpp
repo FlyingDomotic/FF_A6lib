@@ -69,7 +69,7 @@ void FF_A6lib::begin(long baudRate) {
 
 */
 void FF_A6lib::doLoop(void) {
-	char toAdd[250];
+	char toAdd[MAX_ANSWER];
 	int addLength;
 	char *eolPos;
 
@@ -79,6 +79,9 @@ void FF_A6lib::doLoop(void) {
 	addLength = readBuffer(toAdd, sizeof(toAdd));
 	if (addLength) {										// Something received.
 		if ((strlen(lastAnswer) + addLength) > sizeof(lastAnswer)) {
+			#ifndef A6LIB_KEEP_CR_LF
+				cleanString(lastAnswer);					// Remove CR/LF
+			#endif
 			if (debugFlag) trace_debug_P("Answer too long: >%s< and >%s<", lastAnswer, toAdd);
 			// Answer is too long
 			gsmStatus = A6_TOO_LONG;
@@ -98,6 +101,9 @@ void FF_A6lib::doLoop(void) {
 	if (inReceive) {										// We're waiting for a command answer
 		// Is this the expected answer?
 		if (strstr(lastAnswer, expectedAnswer)) {
+			#ifndef A6LIB_KEEP_CR_LF
+				cleanString(lastAnswer);					// Remove CR/LF
+			#endif
 			if (debugFlag) trace_debug_P("Reply in %d ms: >%s<", millis() - startTime, lastAnswer);
 			gsmStatus = A6_OK;
 			if (nextStepCb) {								// Do we have another callback to execute?
@@ -109,13 +115,16 @@ void FF_A6lib::doLoop(void) {
 		}
 		if ((millis() - startTime) >= gsmTimeout) {
 			if (ignoreErrors) {
-				if (nextStepCb) {								// Do we have another callback to execute?
-					(this->*nextStepCb)();						// Yes, do it
+				if (nextStepCb) {							// Do we have another callback to execute?
+					(this->*nextStepCb)();					// Yes, do it
 				} else {
-					setIdle();									// No, we just finished.
+					setIdle();								// No, we just finished.
 				}
 				return;
 			}
+			#ifndef A6LIB_KEEP_CR_LF
+				cleanString(lastAnswer);					// Remove CR/LF
+			#endif
 			// Here, we've got a time-out on answer
 			strncpy(lastCommandInError, lastCommand, sizeof(lastCommandInError));	// Save last command in error
 			if (lastAnswer[0]) {
@@ -151,7 +160,11 @@ void FF_A6lib::doLoop(void) {
 		if (eolPos) {										// Found
 			eolPos[0] = 0;									// Force zero at EOL (first) position
 			if (strlen(lastAnswer)) {						// Answer is not null
-				if (debugFlag) trace_debug_P("Answer is >%s<", lastAnswer);
+				strncpy(toAdd, lastAnswer, sizeof(toAdd));	// Copy lastAnswer to toAdd (unused here) as it may be modified by cleanString()
+				#ifndef A6LIB_KEEP_CR_LF
+					cleanString(toAdd);						// Remove CR/LF
+				#endif
+				if (debugFlag) trace_debug_P("Answer is >%s<", toAdd);	// Display cleaned message
 				if (recvLineCb) recvLineCb(lastAnswer);		// Activate callback with answer
 				if (nextLineIsSmsMessage) {					// Are we receiving a SMS message?
 					readSmsMessage(lastAnswer);				// Yes, read it
@@ -160,7 +173,7 @@ void FF_A6lib::doLoop(void) {
 					if (strstr(lastAnswer, SMS_INDICATOR)) {// Is this indicating an SMS reception?
 						readSmsHeader(lastAnswer);
 					} else {								// Can't understand received data
-						if (debugFlag) trace_debug_P("Ignoring >%s<", lastAnswer);
+						if (debugFlag) trace_debug_P("Ignoring >%s<", toAdd);	// Display cleaned message
 					}
 				}
 			}
@@ -169,6 +182,9 @@ void FF_A6lib::doLoop(void) {
 		}
 	}
 	if (inWaitSmsReady && smsReady) {
+		#ifndef A6LIB_KEEP_CR_LF
+			cleanString(toAdd);							// Remove CR/LF
+		#endif
 		if (debugFlag) trace_debug_P("End of %d ms SMS ready wait, received >%s<", millis() - startTime, lastAnswer);
 		inWait = false;
 		inWaitSmsReady = false;
@@ -183,6 +199,9 @@ void FF_A6lib::doLoop(void) {
 
 	if (inWait) {
 		if ((millis() - startTime) >= gsmTimeout) {
+			#ifndef A6LIB_KEEP_CR_LF
+				cleanString(toAdd);							// Remove CR/LF
+			#endif
 			if (debugFlag) trace_debug_P("End of %d ms wait, received >%s<", millis() - startTime, lastAnswer);
 			inWait = false;
 			gsmStatus = A6_OK;
@@ -315,7 +334,7 @@ void FF_A6lib::deleteSMS(int index, int flag) {
 	char tempBuffer[50];
 
 	snprintf_P(tempBuffer, sizeof(tempBuffer), PSTR("AT+CMGD=%d,%d"), index, flag);
-	sendCommand(tempBuffer, &FF_A6lib::setIdle, DEFAULT_ANSWER, 10000);
+	sendCommand(tempBuffer, &FF_A6lib::setIdle, DEFAULT_ANSWER, 10000);	// Wait up to 10 seconds for OK
 }
 
 /*!
@@ -913,4 +932,20 @@ void FF_A6lib::readSmsMessage(const char* msg) {
 		trace_error_P("Decode failed");
 	}
 	deleteSMS(1,2);
+}
+
+/*!
+
+	\brief	[Private] Replace "\r" and "\n" by "." in-place on a string (original string modified)
+
+	\param[in]	message: message to be modified
+	\return	none
+	
+*/
+void FF_A6lib::cleanString(char* msg) {
+	for (int i = 0; msg[i]; i++) {
+		if (msg[i] == '\n' || msg[i] == '\r' ) {
+			msg[i] = '.';
+		}
+	}
 }
