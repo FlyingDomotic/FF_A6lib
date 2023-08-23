@@ -163,16 +163,17 @@ void FF_A6lib::doLoop(void) {
 		if (eolPos) {										// Found
 			eolPos[0] = 0;									// Force zero at EOL (first) position
 			if (strlen(lastAnswer)) {						// Answer is not null
-				if (debugFlag) trace_debug_P("Answer is >%s<", tempBuffer);	// Display cleaned message
-				if (recvLineCb) recvLineCb(lastAnswer);		// Activate callback with answer
 				if (nextLineIsSmsMessage) {					// Are we receiving a SMS message?
+					if (debugFlag) trace_debug_P("Message is >%s<", tempBuffer);	// Display cleaned message
 					readSmsMessage(lastAnswer);				// Yes, read it
 					nextLineIsSmsMessage = false;			// Clear flag
 				} else {									// Not in SMS reception
 					if (strstr(lastAnswer, SMS_INDICATOR)) {// Is this indicating an SMS reception?
+						if (debugFlag) trace_debug_P("Indicator is >%s<", tempBuffer);	// Display cleaned message
 						readSmsHeader(lastAnswer);
 					} else {								// Can't understand received data
 						if (debugFlag) trace_debug_P("Ignoring >%s<", tempBuffer);	// Display cleaned message
+						if (recvLineCb) recvLineCb(lastAnswer);		// Activate callback with answer
 					}
 				}
 			}
@@ -552,11 +553,12 @@ void FF_A6lib::setModemSpeed(void) {
 	if (modemLastSpeed == modemRequestedSpeed) {
 		// Skip +IPR if modem already at right speed
 		setSpeedComplete();
+	} else {
+		char tempBuffer[50];
+		snprintf_P(tempBuffer, sizeof(tempBuffer), PSTR("AT+IPR=%d"), modemRequestedSpeed);
+		// Set speed
+		sendCommand(tempBuffer, &FF_A6lib::setSpeedComplete);
 	}
-	char tempBuffer[50];
-	snprintf_P(tempBuffer, sizeof(tempBuffer), PSTR("AT+IPR=%d"), modemRequestedSpeed);
-	// Set speed
-	sendCommand(tempBuffer, &FF_A6lib::setSpeedComplete);
 }
 
 /*!
@@ -606,7 +608,21 @@ void FF_A6lib::echoOff(void) {
 void FF_A6lib::detailedErrors(void) {
 	if (traceFlag) enterRoutine(__func__);
 	// Show detailed errors (instead of number)
-	sendCommand("AT+CMEE=2", &FF_A6lib::detailedRegister);
+	sendCommand("AT+CMEE=2", &FF_A6lib::setTextMode);
+}
+
+/*!
+
+	\brief	[Private] Modem initialization: send SMS in PDU mode (instead of text)
+
+	\param	none
+	\return	none
+
+*/
+void FF_A6lib::setTextMode(void) {
+	if (traceFlag) enterRoutine(__func__);
+	// Set SMS to PDU mode
+	sendCommand("AT+CMGF=0", &FF_A6lib::detailedRegister);
 }
 
 /*!
@@ -647,21 +663,7 @@ void FF_A6lib::waitSmsReady(void) {
 void FF_A6lib::setCallerId(void) {
 	if (traceFlag) enterRoutine(__func__);
 	// Set caller ID on
-	sendCommand("AT+CLIP=1", &FF_A6lib::setTextMode);
-}
-
-/*!
-
-	\brief	[Private] Modem initialization: send SMS in PDU mode (instead of text)
-
-	\param	none
-	\return	none
-
-*/
-void FF_A6lib::setTextMode(void) {
-	if (traceFlag) enterRoutine(__func__);
-	// Set SMS to PDU mode
-	sendCommand("AT+CMGF=0", &FF_A6lib::setIndicOff);
+	sendCommand("AT+CLIP=1", &FF_A6lib::setIndicOff);
 }
 
 /*!
