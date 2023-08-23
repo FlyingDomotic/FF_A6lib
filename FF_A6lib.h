@@ -90,9 +90,13 @@ private:
 	void sendCommand(const uint8_t command, void (FF_A6lib::*nextStep)(void)=NULL, const char *resp=DEFAULT_ANSWER, unsigned long cdeTimeout = A6_CMD_TIMEOUT);
 	void waitMillis(unsigned long waitMs, void (FF_A6lib::*nextStep)(void)=NULL);
 	void waitSmsReady(unsigned long waitMs, void (FF_A6lib::*nextStep)(void)=NULL);
+	void findSpeed(void (FF_A6lib::*nextStep)(void)=NULL);
+	void findSpeedAnswer(void);
+	void openModem(long baudRate);
 	int readBuffer(char* reply, int bufferSize);
-	void startReset(void);
 	void setReset(void);
+	void setModemSpeed(void);
+	void setSpeedComplete(void);
 	void echoOff(void);
 	void detailedErrors(void);
 	void setCallerId(void);
@@ -123,6 +127,7 @@ private:
 	unsigned int smsSentCount;								//!< Count of SMS sent
 	bool smsReady;											//!< True if "SMS ready" seen
 	void (FF_A6lib::*nextStepCb)(void);						//!< Callback for next step in command execution
+	void (FF_A6lib::*findSpeedCb)(void);					//!< Callback for next step in speed determination
 	void (*readSmsCb)(int __index, const char* __number, const char* __date, const char* __message); //!< Callback for readSMS
 	void (*recvLineCb)(const char* __answer);				//!< Callback for received line
 	int index;												//!< Index of last read SMS
@@ -143,5 +148,9 @@ private:
 	char lastCommand[60];									//!< Last command sent
 	char lastCommandInError[60];							//!< Last command generating an error
 	char lastErrorMessage[60];								//!< Last error seen
+	long modemRequestedSpeed;								//!< Modem requested speed
+	long modemLastSpeed;									//!< Last speed used to open modem
+	long speedsToTest[6] = {115200,9600,1200,2400,19200,0};	//!< Modem speeds to test
+	int speedsToTestIndex;									//!> Index into speedToText
 };
 #endif
