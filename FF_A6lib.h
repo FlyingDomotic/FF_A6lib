@@ -64,7 +64,7 @@ public:
 	FF_A6lib();
 
 	// Public routines (documented in FF_A6lib.cpp)
-	void begin(long baudRate);
+	void begin(long baudRate, int8_t rxPin, int8_t txPin);
 	void doLoop(void);
 	void debugState(void);
 	void sendSMS(const char* number, const char* text);
@@ -125,6 +125,8 @@ private:
 	unsigned int smsReadCount;								//!< Count of SMS read
 	unsigned int smsForwardedCount;							//!< Count of SMS analyzed
 	unsigned int smsSentCount;								//!< Count of SMS sent
+	int8_t modemRxPin;										//!< Modem RX pin
+	int8_t modemTxPin;										//!< Modem TX pin
 	bool smsReady;											//!< True if "SMS ready" seen
 	void (FF_A6lib::*nextStepCb)(void);						//!< Callback for next step in command execution
 	void (FF_A6lib::*findSpeedCb)(void);					//!< Callback for next step in speed determination

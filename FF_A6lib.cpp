@@ -15,7 +15,7 @@
 #define PDU_BUFFER_LENGTH 200								// Max workspace length
 PDU smsPdu = PDU(PDU_BUFFER_LENGTH);						// Instantiate PDU class
 
-SoftwareSerial a6Serial(D6, D5);							// We use software serial to keep Serial usable
+SoftwareSerial a6Serial(-1, -1);							// We use software serial to keep Serial usable
 
 // Class constructor : init some variables
 FF_A6lib::FF_A6lib() {
@@ -41,10 +41,12 @@ FF_A6lib::FF_A6lib() {
 	Open the modem connection at given baud rate
 
 	\param[in]	baudRate: modem speed (in bauds). Modem will be properly switched to this speed if needed
+	\param[in]	rxPin: ESP pin used to receive data from modem (connected to A6/GA6 UTX)
+	\param[in]	txPin: ESP pin used to send data to modem (connected to A6/GA6 URX)
 	\return	none
 
 */
-void FF_A6lib::begin(long baudRate) {
+void FF_A6lib::begin(long baudRate, int8_t rxPin, int8_t txPin) {
 	if (traceFlag) enterRoutine(__func__);
 	strncpy_P(lastCommandInError, PSTR("[None]"), sizeof(lastCommandInError));
 	strncpy_P(lastErrorMessage, PSTR("[None]"), sizeof(lastErrorMessage));
@@ -52,7 +54,9 @@ void FF_A6lib::begin(long baudRate) {
 	inReceive = false;
 	inWait = false;
 	gsmIdle = A6_STARTING;
-	// Save requested speed
+	// Save RX pin, TX pin and requested speed
+	modemRxPin = txPin;
+	modemTxPin = txPin;
 	modemRequestedSpeed = baudRate;
 	// Open modem at requested speed initially
 	openModem(baudRate);
@@ -461,7 +465,7 @@ void FF_A6lib::openModem(long baudRate) {
 		// Close modem (as it'll probably already be in use)
 		a6Serial.end();
 		// Open modem at given speed
-		a6Serial.begin(baudRate, SWSERIAL_8N1, D6, D5, false, 255); // Connect ESP:D6(12) on A6:U_TX and ESP:D5(14) on A6:U_RX
+		a6Serial.begin(baudRate, SWSERIAL_8N1, modemTxPin, modemRxPin, false);	// Connect ESP:D6(12) on A6:U_TX and ESP:D5(14) on A6:U_RX
 		// Enable TX interruption for speeds up to 19600 bds
 		a6Serial.enableIntTx((baudRate <= 19600));
 		modemLastSpeed = baudRate;
