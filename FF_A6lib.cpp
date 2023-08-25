@@ -55,7 +55,7 @@ void FF_A6lib::begin(long baudRate, int8_t rxPin, int8_t txPin) {
 	inWait = false;
 	gsmIdle = A6_STARTING;
 	// Save RX pin, TX pin and requested speed
-	modemRxPin = txPin;
+	modemRxPin = rxPin;
 	modemTxPin = txPin;
 	modemRequestedSpeed = baudRate;
 	// Open modem at requested speed initially
@@ -465,7 +465,7 @@ void FF_A6lib::openModem(long baudRate) {
 		// Close modem (as it'll probably already be in use)
 		a6Serial.end();
 		// Open modem at given speed
-		a6Serial.begin(baudRate, SWSERIAL_8N1, modemTxPin, modemRxPin, false);	// Connect ESP:D6(12) on A6:U_TX and ESP:D5(14) on A6:U_RX
+		a6Serial.begin(baudRate, SWSERIAL_8N1, modemTxPin, modemRxPin, false);	// Connect to Serial Software
 		// Enable TX interruption for speeds up to 19600 bds
 		a6Serial.enableIntTx((baudRate <= 19600));
 		modemLastSpeed = baudRate;
