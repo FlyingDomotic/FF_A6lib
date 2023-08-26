@@ -48,8 +48,6 @@ FF_A6lib::FF_A6lib() {
 */
 void FF_A6lib::begin(long baudRate, int8_t rxPin, int8_t txPin) {
 	if (traceFlag) enterRoutine(__func__);
-	strncpy_P(lastCommandInError, PSTR("[None]"), sizeof(lastCommandInError));
-	strncpy_P(lastErrorMessage, PSTR("[None]"), sizeof(lastErrorMessage));
 	restartNeeded = false;
 	inReceive = false;
 	inWait = false;
@@ -75,56 +73,91 @@ void FF_A6lib::begin(long baudRate, int8_t rxPin, int8_t txPin) {
 
 */
 void FF_A6lib::doLoop(void) {
-	char tempBuffer[MAX_ANSWER];
-	int addLength;
-	char *eolPos;
-
 	if (traceFlag) enterRoutine(__func__);
 
-	// Get additional text to add to previously received answer
-	addLength = readBuffer(tempBuffer, sizeof(tempBuffer));
-	if (addLength) {										// Something received.
-		if ((strlen(lastAnswer) + addLength) > sizeof(lastAnswer)) {
-			#ifndef A6LIB_KEEP_CR_LF
-				// We can safely clean lastAnswer as we'll reinit it few lines later
-				cleanString(lastAnswer);					// Remove CR/LF
-			#endif
-			if (debugFlag) trace_debug_P("Answer too long: >%s< and >%s<", lastAnswer, lastAnswer);
-			// Answer is too long
-			gsmStatus = A6_TOO_LONG;
-			memset(lastAnswer, 0, sizeof(lastAnswer));		// Reset last answer
-			setIdle();
-			return;
+	// Read modem until \n (LF) character found, removing \r (CR)
+	if (a6Serial.available()) {
+		size_t answerLen = strlen(lastAnswer);				// Get answer length
+		while (a6Serial.available()) {
+			char c = a6Serial.read();
+			// Skip NULL and CR characters
+			if (c != 0 && c != 13) {
+				if (answerLen >= sizeof(lastAnswer)-2) {
+					trace_error_P("Answer too long: >%s<", lastAnswer);
+					// Answer is too long
+					gsmStatus = A6_TOO_LONG;
+					memset(lastAnswer, 0, sizeof(lastAnswer));	// Reset last answer
+					return;
+				}
+				// Do we have an answer?
+				if (c == 10) {
+					// Do we have an "SMS Ready" message?
+					if (!smsReady && strstr(lastAnswer, SMS_READY_MSG)) {
+						if (debugFlag) trace_debug_P("Got SMS Ready");
+						smsReady = true;
+						return;
+					}
+					if (inReceive) {						// Are we waiting for a command answer?
+						// Is this the expected answer?
+						bool isDefaultAnwer = !(strcmp(expectedAnswer, DEFAULT_ANSWER));
+						if ((isDefaultAnwer && !strcmp(lastAnswer, expectedAnswer)) || (!isDefaultAnwer && strstr(lastAnswer, expectedAnswer))) {
+							if (debugFlag) trace_debug_P("Reply in %d ms: >%s<", millis() - startTime, lastAnswer);
+							gsmStatus = A6_OK;
+							if (nextStepCb) {				// Do we have another callback to execute?
+								(this->*nextStepCb)();		// Yes, do it
+							} else {
+								setIdle();					// No, we just finished.
+							}
+							return;
+						}
+						if (!ignoreErrors) {				// Should we ignore errors?
+							// No, check for CMS/CME error
+							if (strstr(lastAnswer,"+CMS ERROR") || strstr(lastAnswer,"+CME ERROR")) {
+								// This is a CMS or CME answer
+								trace_error_P("Error answer: >%s< after %d ms, command was %s", lastAnswer, millis() - startTime, lastCommand);
+								gsmStatus = A6_CM_ERROR;
+								restartNeeded = true;
+								restartReason = gsmStatus;
+								setIdle();
+								return;
+							}
+						}
+					}
+					if (strlen(lastAnswer)) {						// Answer is not null
+						if (nextLineIsSmsMessage) {					// Are we receiving a SMS message?
+							if (debugFlag) trace_debug_P("Message is >%s<", lastAnswer);	// Display cleaned message
+							readSmsMessage(lastAnswer);				// Yes, read it
+							memset(lastAnswer, 0, sizeof(lastAnswer));	// Reset last answer
+							nextLineIsSmsMessage = false;			// Clear flag
+							return;
+						} else {									// Not in SMS reception
+							if (strstr(lastAnswer, SMS_INDICATOR)) {// Is this indicating an SMS reception?
+								if (debugFlag) trace_debug_P("Indicator is >%s<", lastAnswer);	// Display cleaned message
+								readSmsHeader(lastAnswer);
+								memset(lastAnswer, 0, sizeof(lastAnswer));	// Reset last answer
+								inReceive = true;
+								startTime = millis();
+								return;
+							} else {								// Can't understand received data
+								if (debugFlag) trace_debug_P("Ignoring >%s<", lastAnswer);	// Display cleaned message
+								if (recvLineCb) recvLineCb(lastAnswer);		// Activate callback with answer
+								memset(lastAnswer, 0, sizeof(lastAnswer));	// Reset last answer
+								return;
+							}
+						}
+					}
+				} else {
+					// Add received character to lastAnswer
+					lastAnswer[answerLen++] = c;			// Copy character
+					lastAnswer[answerLen] = 0;				// Just in case we forgot cleaning buffer
+				}
+			}
 		}
-		strcat(lastAnswer, tempBuffer);		// Add to answer
-	}
-
-	// Make a clean version of lastAnswer
-		strncpy(tempBuffer, lastAnswer, sizeof(tempBuffer));	// Copy lastAnswer to tempBuffer (unused here) as it may be modified by cleanString()
-		#ifndef A6LIB_KEEP_CR_LF
-			cleanString(tempBuffer);						// Remove CR/LF
-		#endif
-
-	// Do we have an "SMS Ready" message?
-	if (!smsReady && strstr(lastAnswer, SMS_READY_MSG)) {
-		if (debugFlag) trace_debug_P("Got SMS Ready");
-		smsReady = true;
 	}
 
 	if (inReceive) {										// We're waiting for a command answer
-		// Is this the expected answer?
-		if (strstr(lastAnswer, expectedAnswer)) {
-			if (debugFlag) trace_debug_P("Reply in %d ms: >%s<", millis() - startTime, tempBuffer);
-			gsmStatus = A6_OK;
-			if (nextStepCb) {								// Do we have another callback to execute?
-				(this->*nextStepCb)();						// Yes, do it
-			} else {
-				setIdle();									// No, we just finished.
-			}
-			return;
-		}
 		if ((millis() - startTime) >= gsmTimeout) {
-			if (ignoreErrors) {
+			if (ignoreErrors) {								// If errors should be ignored, call next step, if any
 				if (nextStepCb) {							// Do we have another callback to execute?
 					(this->*nextStepCb)();					// Yes, do it
 				} else {
@@ -133,28 +166,15 @@ void FF_A6lib::doLoop(void) {
 				return;
 			}
 			// Here, we've got a time-out on answer
-			strncpy(lastCommandInError, lastCommand, sizeof(lastCommandInError));	// Save last command in error
 			if (lastAnswer[0]) {
-				strncpy(lastErrorMessage, lastAnswer, sizeof(lastErrorMessage));	// Save last error message
-				if (strstr(lastAnswer,"+CMS ERROR") || strstr(lastAnswer,"+CME ERROR")) {
-					// This is a CMS or CME answer
-					if (debugFlag) trace_debug_P("Error answer: >%s< after %d ms", tempBuffer, millis() - startTime);
-					gsmStatus = A6_CM_ERROR;
-					restartNeeded = true;
-					restartReason = gsmStatus;
-					setIdle();
-					return;
-				} else {									// Unknown answer
-					if (debugFlag) trace_debug_P("Bad answer: >%s< after %d ms", tempBuffer, millis() - startTime);
-					gsmStatus = A6_BAD_ANSWER;
-					restartNeeded = true;
-					restartReason = gsmStatus;
-					setIdle();
-					return;
-				}
+				trace_error_P("Partial answer: >%s< after %d ms, command was %s", lastAnswer, millis() - startTime, lastCommand);
+				gsmStatus = A6_BAD_ANSWER;
+				restartNeeded = true;
+				restartReason = gsmStatus;
+				setIdle();
+				return;
 			} else {										// Time-out without any anwser
-				if (debugFlag) trace_debug_P("Timed out after %d ms, received >%s<", millis() - startTime, tempBuffer);
-				strncpy(lastErrorMessage, "[TimeOut]", sizeof(lastErrorMessage));	 // Save last error message
+				trace_error_P("Timed out after %d ms, received >%s<, command was %s", millis() - startTime, lastAnswer, lastCommand);
 				gsmStatus = A6_TIMEOUT;
 				restartNeeded = true;
 				restartReason = gsmStatus;
@@ -162,31 +182,10 @@ void FF_A6lib::doLoop(void) {
 				return;
 			}
 		}
-	} else {												// Not in receive
-		eolPos = strstr(lastAnswer, "\r\n");				// Find end of line
-		if (eolPos) {										// Found
-			eolPos[0] = 0;									// Force zero at EOL (first) position
-			if (strlen(lastAnswer)) {						// Answer is not null
-				if (nextLineIsSmsMessage) {					// Are we receiving a SMS message?
-					if (debugFlag) trace_debug_P("Message is >%s<", tempBuffer);	// Display cleaned message
-					readSmsMessage(lastAnswer);				// Yes, read it
-					nextLineIsSmsMessage = false;			// Clear flag
-				} else {									// Not in SMS reception
-					if (strstr(lastAnswer, SMS_INDICATOR)) {// Is this indicating an SMS reception?
-						if (debugFlag) trace_debug_P("Indicator is >%s<", tempBuffer);	// Display cleaned message
-						readSmsHeader(lastAnswer);
-					} else {								// Can't understand received data
-						if (debugFlag) trace_debug_P("Ignoring >%s<", tempBuffer);	// Display cleaned message
-						if (recvLineCb) recvLineCb(lastAnswer);		// Activate callback with answer
-					}
-				}
-			}
-			// Remove first part of message
-			strncpy(lastAnswer, eolPos + 2, sizeof(lastAnswer));
-		}
 	}
+	
 	if (inWaitSmsReady && smsReady) {
-		if (debugFlag) trace_debug_P("End of %d ms SMS ready wait, received >%s<", millis() - startTime, tempBuffer);
+		if (debugFlag) trace_debug_P("End of %d ms SMS ready wait, received >%s<", millis() - startTime, lastAnswer);
 		inWait = false;
 		inWaitSmsReady = false;
 		gsmStatus = A6_OK;
@@ -200,7 +199,7 @@ void FF_A6lib::doLoop(void) {
 
 	if (inWait) {
 		if ((millis() - startTime) >= gsmTimeout) {
-			if (debugFlag) trace_debug_P("End of %d ms wait, received >%s<", millis() - startTime, tempBuffer);
+			if (debugFlag) trace_debug_P("End of %d ms wait, received >%s<", millis() - startTime, lastAnswer);
 			inWait = false;
 			gsmStatus = A6_OK;
 			if (nextStepCb) {								// Do we have another callback to execute?
@@ -227,8 +226,6 @@ void FF_A6lib::debugState(void) {
 	trace_info_P("lastCommand=%s", lastCommand);
 	trace_info_P("expectedAnswer=%s", expectedAnswer);
 	trace_info_P("lastAnswer=%s", lastAnswer);
-	trace_info_P("lastCommandInError=%s", lastCommandInError);
-	trace_info_P("lastErrorMessage=%s", lastErrorMessage);
 	trace_info_P("restartNeeded=%d", restartNeeded);
 	trace_info_P("restartReason=%d", restartReason);
 	trace_info_P("smsReady=%d", smsReady);
@@ -653,7 +650,12 @@ void FF_A6lib::detailedRegister(void) {
 */
 void FF_A6lib::waitSmsReady(void) {
 	if (traceFlag) enterRoutine(__func__);
-	waitSmsReady(30000, &FF_A6lib::setCallerId);
+	if (!smsReady) {
+		waitSmsReady(30000, &FF_A6lib::setCallerId);
+	} else {
+		if (debugFlag) trace_debug_P("SMS ready already received");
+		setCallerId();
+	}
 }
 
 /*!
@@ -730,15 +732,15 @@ void FF_A6lib::gotSca(void) {
 	ptrStart = strstr(lastAnswer, CSCA_INDICATOR);
 
 	if (ptrStart == NULL) {
-		if (debugFlag) trace_debug_P("Can't find %s",CSCA_INDICATOR);
+		if (debugFlag) trace_debug_P("Can't find %s in %s",CSCA_INDICATOR, lastAnswer);
 		restartReason = A6_BAD_ANSWER;
 		restartNeeded = true;
 		return;
 	}
-	//	First token is +CMT
+	//	First token is +CSCA
 	char* token = strtok (ptrStart, "\"");
 	if (token == NULL) {
-		if (debugFlag) trace_debug_P("Can't find first token");
+		if (debugFlag) trace_debug_P("Can't find first token in %s", lastAnswer);
 		restartReason = A6_BAD_ANSWER;
 		restartNeeded = true;
 		return;
@@ -747,15 +749,15 @@ void FF_A6lib::gotSca(void) {
 	// Second token is is SCA number
 	token = strtok (NULL, "\"");
 	if (token == NULL) {
-		if (debugFlag) trace_debug_P("Can't find second token");
+		if (debugFlag) trace_debug_P("Can't find second token in %s", lastAnswer);
 		restartReason = A6_BAD_ANSWER;
 		restartNeeded = true;
 		return;
 	}
 	strncpy(scaNumber, token, sizeof(scaNumber));
-	trace_debug_P("setting SCA to %s", scaNumber);
+	if (debugFlag) trace_debug_P("setting SCA to %s", scaNumber);
 	smsPdu.setSCAnumber(scaNumber);
-	deleteReadSent();
+	sendCommand("", &FF_A6lib::deleteReadSent);
 }
 
 /*!
@@ -787,7 +789,7 @@ void FF_A6lib::initComplete(void) {
 		restartReason = gsmStatus;
 	} else {
 		setIdle();
-		trace_debug_P("SMS gateway started, restart count = %d", restartCount);
+		trace_info_P("SMS gateway started, restart count = %d", restartCount);
 		restartCount++;
 	}
 }
@@ -869,7 +871,7 @@ void FF_A6lib::waitMillis(unsigned long waitMs, void (FF_A6lib::*nextStep)(void)
 
 	\brief	[Private] Sends a (char*) command
 
-	\param[in]	command: Command to send (char*)
+	\param[in]	command: Command to send (char*). If empty, will wait for answer of a previously sent command
 	\param[in]	nextStep: Routine to call as next step in sequence
 	\param[in]	resp: Expected command answer
 	\param[in]	cdeTimeout: Maximum time (ms) to wait for correct answer
@@ -884,11 +886,14 @@ void FF_A6lib::sendCommand(const char *command, void (FF_A6lib::*nextStep)(void)
 	gsmStatus = A6_RUNNING;
 	nextStepCb = nextStep;
 	strncpy(expectedAnswer, resp, sizeof(expectedAnswer));
-	strncpy(lastCommand, command, sizeof(lastCommand));			// Save last command
-	memset(lastAnswer, 0, sizeof(lastAnswer));
 	if (debugFlag) trace_debug_P("Issuing command: %s", command);
-	a6Serial.write(command);
-	a6Serial.write('\r');
+	// Send command if defined (else, we'll just wait for answer of a previously sent command)
+	if (command[0]) {
+		strncpy(lastCommand, command, sizeof(lastCommand));			// Save last command
+		memset(lastAnswer, 0, sizeof(lastAnswer));
+		a6Serial.write(command);
+		a6Serial.write('\r');
+	}
 	startTime = millis();
 	inReceive = true;
 	inWait = false;
@@ -919,37 +924,6 @@ void FF_A6lib::sendCommand(const uint8_t command, void (FF_A6lib::*nextStep)(voi
 	startTime = millis();
 	inReceive = true;
 	inWaitSmsReady = false;
-}
-
-
-/*!
-
-	\brief	[Private] Non blocking partial modem answer read
-
-	\param[in]	reply: buffer to store partial answer into
-	\param[in]	bufferSize: maxximum answer characters to read
-	\return	count of returned characters
-
-*/
-int FF_A6lib::readBuffer(char* reply, int bufferSize) {
-	if (traceFlag) enterRoutine(__func__);
-	int retSize = 0;
-
-	// Clear reply buffer
-	//memset(reply, 0 , bufferSize);
-	// Read all available characters
-	while (a6Serial.available()) {
-		char c = a6Serial.read();
-		// Skip NULL characters
-		if (c) {
-			reply[retSize++] = c;
-			reply[retSize] = 0;
-		}
-		if (retSize >= bufferSize) {						// Buffer is full, return it
-			return retSize;
-		}
-	}
-	return retSize;
 }
 
 /*!
@@ -1003,12 +977,11 @@ void FF_A6lib::readSmsHeader(const char* msg) {
 
 	// Parse the response if it contains a valid SMS_INDICATOR
 	ptrStart = strstr(msg, SMS_INDICATOR);
-		if (debugFlag) trace_debug_P("Read SMS");
-
 	if (ptrStart == NULL) {
-		if (debugFlag) trace_debug_P("Can't find %s", SMS_INDICATOR);
+		trace_error_P("Can't find %s in %s", SMS_INDICATOR, msg);
 		return;
 	}
+	if (debugFlag) trace_debug_P("Waiting for SMS");
 	nextLineIsSmsMessage = true;
 }
 
@@ -1023,10 +996,9 @@ void FF_A6lib::readSmsHeader(const char* msg) {
 void FF_A6lib::readSmsMessage(const char* msg) {
 	if (smsPdu.decodePDU(msg)) {
 		if (smsPdu.getOverflow()) {
-			trace_info_P("Overflow, partial message only");
+			trace_warn_P("SMS decode overflow, partial message only");
 		}
-	strncpy(message, msg, sizeof(message));
-		//Serial.print("SCA ");Serial.println(smsPdu.getSCAnumber());
+		strncpy(message, msg, sizeof(message));
 		strncpy(number, smsPdu.getSender(), sizeof(number));
 		strncpy(date, smsPdu.getTimeStamp(), sizeof(date));
 		strncpy(message, smsPdu.getText(),sizeof(message));
@@ -1034,23 +1006,7 @@ void FF_A6lib::readSmsMessage(const char* msg) {
 		if (debugFlag) trace_debug_P("Got SMS from %s, sent at %s, >%s<", number, date, message);
 		executeSmsCb();
 	} else {
-		trace_error_P("Decode failed");
+		trace_error_P("SMS PDU decode failed");
 	}
 	deleteSMS(1,2);
-}
-
-/*!
-
-	\brief	[Private] Replace "\r" and "\n" by "." in-place on a string (original string modified)
-
-	\param[in]	message: message to be modified
-	\return	none
-	
-*/
-void FF_A6lib::cleanString(char* msg) {
-	for (int i = 0; msg[i]; i++) {
-		if (msg[i] == '\n' || msg[i] == '\r' ) {
-			msg[i] = '.';
-		}
-	}
 }

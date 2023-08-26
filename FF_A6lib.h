@@ -19,7 +19,7 @@
 #define MAX_SMS_DATE_LEN 25									//!< SMS date max length
 #define MAX_SMS_MESSAGE_LEN 180								//!< SMS message max length
 #define MAX_ANSWER 200										//!< AT command answer max length
-#define DEFAULT_ANSWER "\r\nOK\r\n"							//!< AT command default answer
+#define DEFAULT_ANSWER "OK"									//!< AT command default answer
 #define SMS_READY_MSG "SMS Ready"							//!< SMS ready signal
 #define SMS_INDICATOR "+CMT: "								//!< SMS received indicator
 #define CSCA_INDICATOR "+CSCA:"								//!< SCA value indicator
@@ -93,7 +93,6 @@ private:
 	void findSpeed(void (FF_A6lib::*nextStep)(void)=NULL);
 	void findSpeedAnswer(void);
 	void openModem(long baudRate);
-	int readBuffer(char* reply, int bufferSize);
 	void setReset(void);
 	void setModemSpeed(void);
 	void setSpeedComplete(void);
@@ -115,7 +114,6 @@ private:
 	void enterRoutine(const char* routineName);
 	void readSmsHeader(const char* msg);
 	void readSmsMessage(const char* msg);
-	void cleanString(char* msg);
 
 	// Private variables
 	unsigned long startTime;								//!< Last command start time
@@ -147,9 +145,7 @@ private:
 	char number[MAX_SMS_NUMBER_LEN];						//!< Number of last read SMS
 	char date[MAX_SMS_DATE_LEN];							//!< Sent date of last read SMS
 	char message[MAX_SMS_MESSAGE_LEN];						//!< Message of last read SMS
-	char lastCommand[60];									//!< Last command sent
-	char lastCommandInError[60];							//!< Last command generating an error
-	char lastErrorMessage[60];								//!< Last error seen
+	char lastCommand[30];									//!< Last command sent
 	long modemRequestedSpeed;								//!< Modem requested speed
 	long modemLastSpeed;									//!< Last speed used to open modem
 	long speedsToTest[6] = {115200,9600,1200,2400,19200,0};	//!< Modem speeds to test
