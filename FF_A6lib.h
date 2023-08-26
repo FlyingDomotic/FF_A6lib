@@ -82,6 +82,7 @@ public:
 	// Public variables
 	bool debugFlag;											//!< Show debug messages flag
 	bool traceFlag;											//!< Show trace messages flag
+	bool traceEnterFlag;									//!< Show each outine entering flag
 	bool ignoreErrors;										//!< Ignore errors flag
 
 private:
@@ -103,7 +104,7 @@ private:
 	void getSca(void);
 	void gotSca(void);
 	void setHeaderDetails(void);
-	void waitSmsReady(void);
+	void waitUntilSmsReady(void);
 	void setIndicOff(void);
 	void detailedRegister(void);
 	void deleteReadSent(void);
@@ -114,6 +115,7 @@ private:
 	void enterRoutine(const char* routineName);
 	void readSmsHeader(const char* msg);
 	void readSmsMessage(const char* msg);
+	void cleanLastAnswer(void);
 
 	// Private variables
 	unsigned long startTime;								//!< Last command start time
