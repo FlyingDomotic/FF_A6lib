@@ -115,7 +115,7 @@ private:
 	void enterRoutine(const char* routineName);
 	void readSmsHeader(const char* msg);
 	void readSmsMessage(const char* msg);
-	void cleanLastAnswer(void);
+	void resetLastAnswer(void);
 
 	// Private variables
 	unsigned long startTime;								//!< Last command start time
