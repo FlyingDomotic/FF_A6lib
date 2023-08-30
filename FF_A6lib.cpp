@@ -792,6 +792,19 @@ void FF_A6lib::gotSca(void) {
 		return;
 	}
 	strncpy(scaNumber, token, sizeof(scaNumber));
+	// Check SCA number (first char can be "+", all other should be digit)
+	for (int i = 0; scaNumber[i]; i++) {
+		// Is char not a number?
+		if (scaNumber[i] < '0' || scaNumber[i] > '9') {
+			// First char could be '+'
+			if (scaNumber[0] != '+' || i != 0) {
+				if (debugFlag) trace_debug_P("Bad SCA number %s", scaNumber);
+				restartReason = A6_BAD_ANSWER;
+				restartNeeded = true;
+				return;
+			}
+		}
+	}
 	if (debugFlag) trace_debug_P("setting SCA to %s", scaNumber);
 	smsPdu.setSCAnumber(scaNumber);
 	resetLastAnswer();
