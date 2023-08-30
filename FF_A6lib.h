@@ -67,7 +67,7 @@ public:
 	void begin(long baudRate, int8_t rxPin, int8_t txPin);
 	void doLoop(void);
 	void debugState(void);
-	void sendSMS(const char* number, const char* text);
+	void sendSMS(const char* number, const char* text, const unsigned short msg_id = 0, const unsigned char msg_count = 0, const unsigned char msg_index = 0);
 	void registerSmsCb(void (*readSmsCallback)(int __index, const char* __number, const char* __date, const char* __message));
 	void registerLineCb(void (*recvLineCallback)(const char* __answer));
 	void deleteSMS(int index, int flag);

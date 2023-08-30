@@ -12,7 +12,7 @@
 #define PM													// Define PDU tables in flash
 #include <PDUlib.h>											// https://github.com/mgaman/PDUlib
 
-#define PDU_BUFFER_LENGTH 250								// Max workspace length
+#define PDU_BUFFER_LENGTH 400								// Max workspace length
 PDU smsPdu = PDU(PDU_BUFFER_LENGTH);						// Instantiate PDU class
 
 SoftwareSerial a6Serial(-1, -1);							// We use software serial to keep Serial usable
@@ -288,11 +288,18 @@ void FF_A6lib::debugState(void) {
 	\return	none
 
 */
-void FF_A6lib::sendSMS(const char* number, const char* text) {
+void FF_A6lib::sendSMS(const char* number, const char* text, const unsigned short msg_id, const unsigned char msg_count, const unsigned char msg_index) {
 	if (traceFlag) enterRoutine(__func__);
 	char tempBuffer[50];
-	int len = smsPdu.encodePDU(number, text);
+	int len = smsPdu.encodePDU(number, text, msg_id, msg_count, msg_index);
 	if (len < 0)  {
+			// -1: OBSOLETE_ERROR
+			// -2: UCS2_TOO_LONG
+			// -3 GSM7_TOO_LONG
+			// -4 MULTIPART_NUMBERS
+			// -5 ADDRESS_FORMAT
+			// -6 WORK_BUFFER_TOO_SMALL
+			// -7 ALPHABET_8BIT_NOT_SUPPORTED
 		trace_error_P("Encode error %d sending SMS to %s >%s<", len, number, text);
 		return;
 	}
