@@ -10,7 +10,7 @@
 #include <FF_Trace.h>
 #include <SoftwareSerial.h>
 #define PM													// Define PDU tables in flash
-#include <PDUlib.h>											// https://github.com/mgaman/PDUlib
+#include <pdulib.h>											// https://github.com/mgaman/PDUlib
 
 #define PDU_BUFFER_LENGTH 400								// Max workspace length
 PDU smsPdu = PDU(PDU_BUFFER_LENGTH);						// Instantiate PDU class
