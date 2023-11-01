@@ -2,7 +2,7 @@
 	\file
 	\brief	Implements a fully asynchronous SMS send/receive in PDU mode for A6/GA6 modem class
 	\author	Flying Domotic
-	\date	August 16th, 2023
+	\date	September 9th, 2023
 
 	Have a look at FF_A6lib.cpp for details
 
@@ -16,8 +16,6 @@
 // Constants
 #define A6_CMD_TIMEOUT 4000									//!< Standard AT command timeout (ms)
 #define MAX_SMS_NUMBER_LEN 20								//!< SMS number max length
-#define MAX_SMS_DATE_LEN 25									//!< SMS date max length
-#define MAX_SMS_MESSAGE_LEN 180								//!< SMS message max length
 #define MAX_ANSWER 200										//!< AT command answer max length
 #define DEFAULT_ANSWER "OK"									//!< AT command default answer
 #define SMS_READY_MSG "SMS Ready"							//!< SMS ready signal
@@ -48,7 +46,7 @@ public:
 
 		This class allows asynchronously sending/receiving SMS using an A6 or GA6 (and probably others) modem using PDU mode.
 
-		Messages are in UTF-8 format and automatically converted into GSM7 (160 characters) or UCS2 (70 characters).
+		Messages are in UTF-8 format and automatically converted into GSM7 (160 characters) or UCS-2 (70 characters).
 
 		A callback routine in your program will be called each time a SMS is received.
 
@@ -67,7 +65,8 @@ public:
 	void begin(long baudRate, int8_t rxPin, int8_t txPin);
 	void doLoop(void);
 	void debugState(void);
-	void sendSMS(const char* number, const char* text, const unsigned short msg_id = 0, const unsigned char msg_count = 0, const unsigned char msg_index = 0);
+	void sendSMS(const char* number, const char* text);
+	void sendOneSmsChunk(const char* number, const char* text, const unsigned short msgId = 0, const unsigned char msgCount = 0, const unsigned char msgIndex = 0);
 	void registerSmsCb(void (*readSmsCallback)(int __index, const char* __number, const char* __date, const char* __message));
 	void registerLineCb(void (*recvLineCallback)(const char* __answer));
 	void deleteSMS(int index, int flag);
@@ -78,11 +77,19 @@ public:
 	bool isIdle(void);
 	bool isSending(void);
 	bool isReceiving(void);
+	const char* getLastReceivedNumber(void);
+	const char* getLastReceivedDate(void);
+	const char* getLastReceivedMessage(void);
+	const char* getLastSentNumber(void);
+	const char* getLastSentDate(void);
+	const char* getLastSentMessage(void);
+	uint8_t getGsm7EquivalentLen(const uint8_t c1, const uint8_t c2, const uint8_t c3);
+	uint16_t ucs2MessageLength(const char* text);
 
 	// Public variables
 	bool debugFlag;											//!< Show debug messages flag
 	bool traceFlag;											//!< Show trace messages flag
-	bool traceEnterFlag;									//!< Show each outine entering flag
+	bool traceEnterFlag;									//!< Show each routine entering flag
 	bool ignoreErrors;										//!< Ignore errors flag
 
 private:
@@ -92,6 +99,7 @@ private:
 	void waitMillis(unsigned long waitMs, void (FF_A6lib::*nextStep)(void)=NULL);
 	void waitSmsReady(unsigned long waitMs, void (FF_A6lib::*nextStep)(void)=NULL);
 	void findSpeed(void (FF_A6lib::*nextStep)(void)=NULL);
+	void sendNextSmsChunk(void);
 	void findSpeedAnswer(void);
 	void openModem(long baudRate);
 	void setReset(void);
@@ -144,13 +152,21 @@ private:
 	bool nextLineIsSmsMessage;								//!< True if next line will be an SMS message (just after SMS header)
 	char lastAnswer[MAX_ANSWER];							//!< Contains the last GSM command anwser
 	char expectedAnswer[10];								//!< Expected answer to consider command ended
-	char number[MAX_SMS_NUMBER_LEN];						//!< Number of last read SMS
-	char date[MAX_SMS_DATE_LEN];							//!< Sent date of last read SMS
-	char message[MAX_SMS_MESSAGE_LEN];						//!< Message of last read SMS
 	char lastCommand[30];									//!< Last command sent
 	long modemRequestedSpeed;								//!< Modem requested speed
 	long modemLastSpeed;									//!< Last speed used to open modem
 	long speedsToTest[6] = {115200,9600,1200,2400,19200,0};	//!< Modem speeds to test
-	int speedsToTestIndex;									//!> Index into speedToText
+	int speedsToTestIndex;									//!< Index into speedToText
+	uint16_t gsm7Length;									//!< Size of GSM-7 message (0 for UCS-2 messages)
+	unsigned short smsMsgId;								//!< Multi-part message ID (to be incremented for each multi-part message sent)
+	uint8_t smsMsgIndex;									//!< Chunk index of current multi-part message
+	uint8_t smsMsgCount;									//!< Chunk total count of current multi-part message
+	uint8_t smsChunkSize;									//!< Chunk size for this message
+	String lastReceivedNumber;								//!< Phone number of last received SMS
+	String lastReceivedDate;								//!< Date of last received SMS
+	String lastReceivedMessage;								//!< Message of last received SMS
+	String lastSentNumber;									//!< Phone number of last SMS sent
+	String lastSentDate;									//!< Date of last SMS sent
+	String lastSentMessage;									//!< Message of last SMS sent
 };
 #endif

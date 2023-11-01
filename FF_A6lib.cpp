@@ -5,11 +5,19 @@
 	\date	August 16th, 2023
 */
 
+/*
+Todo:
+	- move last send/received variables into a6lib
+	- base sendSms and sendSmsNext on this
+	- implements routines to read them
+*/
+
 #include <FF_A6lib.h>
 #include <stdio.h>
 #include <FF_Trace.h>
 #include <SoftwareSerial.h>
 #define PM													// Define PDU tables in flash
+#include <NtpClientLib.h>									// https://github.com/gmag11/NtpClient
 #include <pdulib.h>											// https://github.com/mgaman/PDUlib
 
 #define PDU_BUFFER_LENGTH 400								// Max workspace length
@@ -33,6 +41,12 @@ FF_A6lib::FF_A6lib() {
 	smsReadCount = 0;
 	smsForwardedCount = 0;
 	smsSentCount = 0;
+	lastReceivedNumber = PSTR("[none]");
+	lastReceivedDate = PSTR("[never]");
+	lastReceivedMessage = PSTR("[no message]");
+	lastSentNumber = PSTR("[none]");
+	lastSentDate = PSTR("[never]");
+	lastSentMessage = PSTR("[no message]");
 }
 
 /*!
@@ -243,7 +257,7 @@ void FF_A6lib::doLoop(void) {
 
 	\brief	Trace some internal variables values (user for debug)
 
-	This routine dumps (almaost all) variables using trace_info_P macro (usually defined in Ff_TRACE)
+	This routine dumps (almost all) variables using trace_info_P macro (usually defined in Ff_TRACE)
 
 	\param	none
 	\return	none
@@ -269,9 +283,6 @@ void FF_A6lib::debugState(void) {
 	trace_info_P("smsReadCount=%d", smsReadCount);
 	trace_info_P("smsForwardedCount=%d", smsForwardedCount);
 	trace_info_P("smsSentCount=%d", smsSentCount);
-	trace_info_P("number=%s", number);
-	trace_info_P("date=%s", date);
-	trace_info_P("message=%s", message);
 	trace_info_P("a6-debugFlag=%d", debugFlag);
 	trace_info_P("a6-traceFlag=%d", traceFlag);
 	trace_info_P("a6-traceEnterFlag=%d", traceEnterFlag);
@@ -279,19 +290,116 @@ void FF_A6lib::debugState(void) {
 
 /*!
 
-	\brief	Queue a SMS for sending
+	\brief	Sends an SMS to modem
 
-	This routine adds a couple message/number to send message to in queue
+	This routine pushes an SMS to modem.
+		It determines if message is a GMS7 only message or not (in this case, this will be UCS-2)
+		If message is GSM7, max length of non chunked SMS is 160. For UCS-2, this is 70.
+		When message is longer than these limits, it'll be split in chunks of 153 chars for GSM7, or 67 chars for UCS-2.
+		There's a theoretical limit of 255 chunks, but most of operators are limiting in lower size.
+		It seems that 7 to 8 messages are accepted by almost everyone, meaning 1200 GSM7 chars, or 550 UCS-2 chars.
 
 	\param[in]	number: phone number to send message to
 	\param[in]	text: message to send
 	\return	none
 
 */
-void FF_A6lib::sendSMS(const char* number, const char* text, const unsigned short msg_id, const unsigned char msg_count, const unsigned char msg_index) {
+void FF_A6lib::sendSMS(const char* number, const char* text) {
+	uint16_t utf8Length = strlen(text);						// Size of UTF-8 message
+	uint8_t lengthToAdd;									// Length of one UTF-8 char in GSM-7 (or zero if UTF-8 input character outside GSM7 table)
+	uint8_t c1;												// First char of UTF-8 message
+	uint8_t c2;												// Second char of UTF-8 message
+	uint8_t c3;												// Third char of UTF-8 message
+	gsm7Length = 0;											// Size of GSM-7 message
+
+	for (uint16_t i = 0; i < utf8Length; i++) {				// Scan the full message
+		c1 = text[i];										// Extract first to third chars
+		if (i+1 < utf8Length) {c2 = text[i+1];} else {c2 = 0;}
+		if (i+2 < utf8Length) {c3 = text[i+2];} else {c3 = 0;}
+		lengthToAdd = getGsm7EquivalentLen(c1, c2, c3);		// Get equivalent GSM-7 length
+		if (lengthToAdd) {									// If char is GSM-7
+			gsm7Length += lengthToAdd;						// Add length
+		} else {
+			if (debugFlag) trace_info_P("Switched to UTF-8 on char %d (0x%02x) at pos %d", c1, c1, i);
+			gsm7Length = 0;									// Set length to zero
+			break;											// Exit loop
+		}
+	}
+	
+	// Should we split message in chunks?
+	if (gsm7Length) {										// Is this a GSM-7 message ?
+		if (gsm7Length > 160) {								// This is a multi-part message
+			smsMsgCount = (gsm7Length + 151) / 152;			// Compute total chunks
+			smsMsgId++;
+			smsChunkSize = 152;
+		} else {
+			smsMsgCount = 0;
+		}
+		if (debugFlag) trace_info_P("gsm7, lenght=%d, msgs=%d", gsm7Length, smsMsgCount);
+	} else {												// This is an UCS-2 message
+		uint16_t ucs2Length = ucs2MessageLength(text);		// Get UCS-2 message length
+		if (ucs2Length > 70) {								// This is a multi-part message
+			smsMsgCount = (ucs2Length + 66) / 67;			// Compute total chunks
+			smsMsgId++;
+			smsChunkSize = 67;
+		} else {
+			smsMsgCount = 0;
+		}
+		if (debugFlag) trace_info_P("ucs2, length=%d, msgs=%d", ucs2Length, smsMsgCount);
+	}
+	// Save last used number and message
+	lastSentNumber = String(number);
+	lastSentMessage = String(text);
+	lastSentDate = NTP.getDateStr() + " " + NTP.getTimeStr();
+	// Send first (or only) SMS part
+	if (smsMsgCount == 0) {
+		sendOneSmsChunk(number, text);
+	} else {
+		smsMsgIndex = 0;
+		uint16_t startPos = smsMsgIndex++ * smsChunkSize;
+		sendOneSmsChunk(number, lastSentMessage.substring(startPos, startPos+smsChunkSize).c_str(), smsMsgId, smsMsgCount, smsMsgIndex);	// Send first chunk
+	}
+}
+
+/*!
+
+	\brief	Sends next SMS chunk to modem
+
+	This routine is called when an SMS chunk has been pushed to modem, to send next part, if it exists
+
+	\param	none
+	\return	none
+
+*/
+void FF_A6lib::sendNextSmsChunk(void){
+	if (smsMsgCount) {										// Are we in multi-part message ?
+		if (smsMsgIndex < smsMsgCount) {				// Do we have more chunks to send ?
+			uint16_t startPos = smsMsgIndex++ * smsChunkSize;
+			sendOneSmsChunk(lastSentNumber.c_str(), lastSentMessage.substring(startPos, startPos+smsChunkSize).c_str(), smsMsgId, smsMsgCount, smsMsgIndex);	// Send first chunk
+			return;
+		}
+	}
+	setIdle();												// Message has fully be sent
+}
+
+/*!
+
+	\brief	Sends an SMS chunk to modem
+
+	This routine pushes an SMS chunk to modem
+
+	\param[in]	number: phone number to send message to
+	\param[in]	text: message to send
+	\param[in]	msgId: SMS message identifier (should be incremented for each multi-part message, zero if not multi-part message)
+	\param[in]	msgCount: total number of SMS chunks (zero if not multi-part message)
+	\param[in]	msgIndex: index of this message chunk (zero if not multi-part message)
+	\return	none
+
+*/
+void FF_A6lib::sendOneSmsChunk(const char* number, const char* text, const unsigned short msgId, const unsigned char msgCount, const unsigned char msgIndex) {
 	if (traceFlag) enterRoutine(__func__);
 	char tempBuffer[50];
-	int len = smsPdu.encodePDU(number, text, msg_id, msg_count, msg_index);
+	int len = smsPdu.encodePDU(number, text, msgId, msgCount, msgIndex);
 	if (len < 0)  {
 			// -1: OBSOLETE_ERROR
 			// -2: UCS2_TOO_LONG
@@ -858,7 +966,7 @@ void FF_A6lib::sendSMStext(void) {
 
 	if (debugFlag) trace_debug_P("Message: %s", smsPdu.getSMS());
 	a6Serial.write(smsPdu.getSMS());
-	sendCommand(0x1a, &FF_A6lib::setIdle, "+CMGS:", 10000);
+	sendCommand(0x1a, &FF_A6lib::sendNextSmsChunk, "+CMGS:", 10000);
 }
 
 /*!
@@ -872,7 +980,7 @@ void FF_A6lib::sendSMStext(void) {
 void FF_A6lib::executeSmsCb(void) {
 	if (traceFlag) enterRoutine(__func__);
 	if (readSmsCb) {
-		(*readSmsCb)(index, number, date, message);
+		(*readSmsCb)(index, lastReceivedNumber.c_str(), lastReceivedDate.c_str(), lastReceivedMessage.c_str());
 	}
 }
 
@@ -1017,9 +1125,6 @@ void FF_A6lib::enterRoutine(const char* routineName) {
 */
 void FF_A6lib::readSmsHeader(const char* msg) {
 	if (traceFlag) enterRoutine(__func__);
-	number[0] = 0;
-	date[0] = 0;
-	message[0] = 0;
 	index = 0;
 
 	// Answer format is:
@@ -1050,12 +1155,11 @@ void FF_A6lib::readSmsMessage(const char* msg) {
 		if (smsPdu.getOverflow()) {
 			trace_warn_P("SMS decode overflow, partial message only", NULL);
 		}
-		strncpy(message, msg, sizeof(message));
-		strncpy(number, smsPdu.getSender(), sizeof(number));
-		strncpy(date, smsPdu.getTimeStamp(), sizeof(date));
-		strncpy(message, smsPdu.getText(),sizeof(message));
+		lastReceivedNumber = String(smsPdu.getSender());
+		lastReceivedDate = String(smsPdu.getTimeStamp());
+		lastReceivedMessage = String(smsPdu.getText());
 		smsForwardedCount++;
-		if (debugFlag) trace_debug_P("Got SMS from %s, sent at %s, >%s<", number, date, message);
+		if (debugFlag) trace_debug_P("Got SMS from %s, sent at %s, >%s<", lastReceivedNumber.c_str(), lastReceivedDate.c_str(), lastReceivedMessage.c_str());
 		executeSmsCb();
 	} else {
 		trace_error_P("SMS PDU decode failed", NULL);
@@ -1074,4 +1178,182 @@ void FF_A6lib::readSmsMessage(const char* msg) {
 void FF_A6lib::resetLastAnswer(void) {
 	if (traceFlag) enterRoutine(__func__);
 	memset(lastAnswer, 0, sizeof(lastAnswer));
+}
+
+/*!
+
+	\brief	Return GSM7 equivalent length of one UTF-8 character
+
+	This routine takes one UTF-8 character coded on up-to 3 bytes to return it's length when coded in GSM7
+
+	\param[in]	c1: first byte of UTF-8 character to analyze
+	\param[in]	c2: second byte of UTF-8 character to analyze (or zero if end of message)
+	\param[in]	c3: third byte of UTF-8 character to analyze (or zero if end of message)
+	\return	Length of character when coded in GSM7 (or zero if UTF-8 input character outside GSM7 table)
+
+*/
+
+uint8_t FF_A6lib::getGsm7EquivalentLen(const uint8_t c1, const uint8_t c2, const uint8_t c3) {
+	if (
+			// These are one byte UTF8 char coded on one byte GSM7 char
+			(c1 == 0x0a)	/* Linefeed */ 																						||
+			(c1 == 0x0d)	/* Carriage return */ 																				||
+			(c1 >= 0x20		/* Space */ 								&& c1 <= 0x5a) /* Capital letter Z */					|| 
+			(c1 == 0x5f)	/* Underscore */ 																					||
+			(c1 >= 0x61		/* Small letter a */ 						&& c1 <= 0x7a) /* Small letter z */ 
+		) {
+			return 1;
+	}
+	if ((c1 == 0xc2) && (
+			// These are two bytes UTF8 char coded on one byte GSM7 char
+			(c2 == 0xa1)	/* Inverted exclamation mark */																		||
+			(c2 >= 0xa3		/* Pound sign */							&& c2 <= 0xa5) /* Yuan/Yen sign */						|| 
+			(c2 == 0xa7)	/* Section sign */ 																					||
+			(c2 == 0xbf)	/* Inverted question mark */
+		)) {
+			return 1;
+	}
+	if ((c1 == 0xc3) && (
+			// These are two bytes UTF8 char coded on one byte GSM7 char
+			(c2 >= 0x84		/* Capital letter A with diaeresis */		&& c2 <= 0x87) /* Capital letter C with cedilla */		|| 
+			(c2 == 0x89)	/* Capital letter E with acute accent */															|| 
+			(c2 == 0x91)	/* Capital letter N with tilde */																	||
+			(c2 == 0x96)	/* Capital letter O with diaeresis */																||
+			(c2 == 0x98)	/* Capital letter O with stroke */																	||
+			(c2 == 0x9c)	/* Capital letter U with diaeresis */																||
+			(c2 >= 0x9f		/* Small letter German Eszett */			&& c2 <= 0xa0) /* Small letter a with grave accent */	|| 
+			(c2 >= 0xa4		/* Small letter a with diaeresis */			&& c2 <= 0xa6) /* Small letter ae */					|| 
+			(c2 >= 0xa8		/* Small letter e with grave accent */		&& c2 <= 0xa9) /* Small letter e with acute accent */	|| 
+			(c2 == 0xac)	/* Small letter i with grave accent */																||
+			(c2 >= 0xb1		/* Small letter n with tilde */				&& c2 <= 0xb2) /* Small letter o with grave accent */	|| 
+			(c2 == 0xb6)	/* Small letter o with diaeresis */																	||
+			(c2 >= 0xb8		/* Small letter o with stroke */			&& c2 <= 0xb9) /* Small letter u with grave accent */	|| 
+			(c2 == 0xbc)	/* Small letter u with diaeresis */ 
+		)) {
+			return 1;
+	}
+	if (
+			// These are one byte UTF8 char coded on two bytes GSM7 char
+			(c1 == 0x0c)	/* Form feed */ ||
+			(c1 >= 0x5b		/* Left square bracket */					&& c1 <= 0x5e) /* Caret / Circumflex */					|| 
+			(c1 >= 0x7b		/* Left curly bracket */					&& c1 <= 0x7e) /* Tilde */
+		) {
+			return 2;
+	}
+	if (c1 == 0xe2 && 
+			// This is three bytes UTF8 char coded on two bytes GSM7 char
+			c2 == 0x82 &&
+			c3 == 0xac 		/* Euro sign */
+		) {
+		return 2;
+	}
+	return 0;
+}
+
+/*!
+
+	\brief	Return UCS-2 equivalent length of one UTF-8 character
+
+	This routine takes one UTF-8 message to return it's length when coded in UCS-2
+
+	\param[in]	text: message to be scanned
+	\return	Length of character when coded in UCS-2
+
+*/
+
+uint16_t FF_A6lib::ucs2MessageLength(const char* text) {
+	uint16_t utf8CharCount = 0;
+
+	// Get UTF-8 message length
+	while (*text) {
+		// Cout only first byte of each UTF-8 sequence
+		utf8CharCount += (*text++ & 0xc0) != 0x80;
+	}
+	// UCS-2 if 2 chars for each UTF-8 character
+	return utf8CharCount * 2;
+}
+
+/*!
+
+	\brief	Return phone number of last received SMS
+
+	This routine returns the phone number of last received SMS
+
+	\param	None
+	\return	Phone number of last received SMS
+
+*/
+
+const char* FF_A6lib::getLastReceivedNumber(void) {
+	return lastReceivedNumber.c_str();
+}
+
+/*!
+
+	\brief	Return date of last received SMS
+
+	This routine returns the phone number of last received SMS
+
+	\param	None
+	\return	Date of last received SMS
+
+*/
+const char* FF_A6lib::getLastReceivedDate(void) {
+	return lastReceivedDate.c_str();
+}
+
+/*!
+
+	\brief	Return message of last received SMS
+
+	This routine returns the message of last received SMS
+
+	\param	None
+	\return	Message of last received SMS
+
+*/
+const char* FF_A6lib::getLastReceivedMessage(void) {
+	return lastReceivedMessage.c_str();
+}
+
+/*!
+
+	\brief	Return phone number of last sent SMS
+
+	This routine returns the phone number of last sent SMS
+
+	\param	None
+	\return	Phone number of last sent SMS
+
+*/
+const char* FF_A6lib::getLastSentNumber(void) {
+	return lastSentNumber.c_str();
+}
+
+/*!
+
+	\brief	Return date of last sent SMS
+
+	This routine returns the date of last sent SMS
+
+	\param	None
+	\return	Date of last sent SMS
+
+*/
+const char* FF_A6lib::getLastSentDate(void) {
+	return lastSentDate.c_str();
+}
+
+/*!
+
+	\brief	Return message of last sent SMS
+
+	This routine returns the message of last sent SMS
+
+	\param	None
+	\return	Message of last sent SMS
+
+*/
+const char* FF_A6lib::getLastSentMessage(void) {
+	return lastSentMessage.c_str();
 }

@@ -4,7 +4,7 @@ Fully asynchronous SMS send/receive in PDU mode for A6/GA6 modem class
 ## What's for?
 This class allows asynchronously sending/receiving SMS using an A6 or GA6 (and probably others) modem using PDU mode.
 
-Messages are in UTF-8 format and automatically converted into GSM7 (160 characters) or UCS2 (70 characters).
+Messages are in UTF-8 format and automatically converted into GSM7 or UCS2, and split in multiple messages if needed.
 
 A callback routine in your program will be called each time a SMS is received.
 
@@ -47,3 +47,11 @@ or
 git checkout <modified file>
 ```
 
+## Documentation
+
+Documentation could be built using doxygen, either using makedoc.sh (for Linux) or makedoc.bat (for Windows), or running
+```
+doxygen doxyfile
+```
+
+HTML and RTF versions will then be available in `documentation` folder.
