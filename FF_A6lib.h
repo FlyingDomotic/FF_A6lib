@@ -155,7 +155,7 @@ private:
 	char lastCommand[30];									//!< Last command sent
 	long modemRequestedSpeed;								//!< Modem requested speed
 	long modemLastSpeed;									//!< Last speed used to open modem
-	long speedsToTest[6] = {115200,9600,1200,2400,19200,0};	//!< Modem speeds to test
+	long speedsToTest[6] = {115200,19200,9600,2400,1200,0};	//!< Modem speeds to test
 	int speedsToTestIndex;									//!< Index into speedToText
 	uint16_t gsm7Length;									//!< Size of GSM-7 message (0 for UCS-2 messages)
 	unsigned short smsMsgId;								//!< Multi-part message ID (to be incremented for each multi-part message sent)

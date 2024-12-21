@@ -608,8 +608,8 @@ void FF_A6lib::openModem(long baudRate) {
 		a6Serial.end();
 		// Open modem at given speed
 		a6Serial.begin(baudRate, SWSERIAL_8N1, modemTxPin, modemRxPin, false, 250);	// Connect to Serial Software
-		// Enable TX interruption for speeds up to 19600 bds
-		a6Serial.enableIntTx((baudRate <= 19600));
+		// Enable TX interruption for speeds up to 19200 bds
+		a6Serial.enableIntTx((baudRate <= 19200));
 		modemLastSpeed = baudRate;
 	}
 }
@@ -628,7 +628,7 @@ void FF_A6lib::findSpeed(void (FF_A6lib::*nextStep)(void)) {
 	ignoreErrors = true;									// Ignore errors
 	speedsToTestIndex = -1;									// Init speed index
 	// Send attention command at current speed first
-	sendCommand("AT", &FF_A6lib::findSpeedAnswer, DEFAULT_ANSWER, 1500);
+	sendCommand("AT", &FF_A6lib::findSpeedAnswer, DEFAULT_ANSWER, 500);
 }
 
 /*!
@@ -650,7 +650,7 @@ void FF_A6lib::findSpeedAnswer(void) {
 			// Open modem at test speed
 			openModem(modemSpeed);
 			// Send attention command
-			sendCommand("AT", &FF_A6lib::findSpeedAnswer, DEFAULT_ANSWER, 1500);
+			sendCommand("AT", &FF_A6lib::findSpeedAnswer, DEFAULT_ANSWER, 500);
 			return;
 		} else {
 			// No, open modem at requested speed
