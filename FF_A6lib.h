@@ -58,6 +58,13 @@ public:
 
 		You may have a look at https://github.com/FlyingDomotic/FF_SmsServer which shows how to use it
 
+		By default, A6lib uses (G)A6 modem connected on D8(TX) and D7(RX).
+		
+		You can use #define USE_DIRECT_CONNECTIONS_FOR_A6LIB if A6is connected directly to TX/RX. Don't forget to set Serial.setDebugOutput to avoid garbage.
+		
+		You may also use #define USE_SOFTSERIAL_FOR_A6LIB to use SoftwareSerial instead of Serila.swap(), but 
+			be aware that program will crash if you're using any asynchronous libraries (like espAsyncxxx).
+
 	*/
 	FF_A6lib();
 

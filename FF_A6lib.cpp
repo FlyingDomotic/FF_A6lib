@@ -31,12 +31,15 @@ PDU smsPdu = PDU(PDU_BUFFER_LENGTH);						// Instantiate PDU class
     SoftwareSerial a6Serial;               					// We use software serial to keep Serial usable
     #warning Using SoftwareSerial will crash when using other asynchronous librairies
 #else
+    #define a6Serial Serial                                 // Use Serial for A6lib
+    #ifdef USE_DIRECT_CONNECTIONS_FOR_A6LIB
                                                             // ************************** WARNING **************************
 															//	Due to a bug, Serial.swap needed to swap TX/RX with D8/D7
 															//		doesn't work when setDebugOutput is set to true.
-															//		Be sure your revert it to false before doing the swap!!!
+															//		Use direct connections instead of swap.
                                                             // ************************** WARNING **************************
-    #define a6Serial Serial                                 // Use Serial for A6lib
+        #warning "Serial.swap() and Serial.setDebugOutput(false) won't be used - Be sure you connected A6 on RX/TX"
+    #endif
 #endif
 
 // Class constructor : init some variables
@@ -625,6 +628,10 @@ void FF_A6lib::openModem(long baudRate) {
             a6Serial.enableIntTx((baudRate <= 19200));
         #else
             a6Serial.begin(baudRate, SERIAL_8N1);
+            #ifndef USE_DIRECT_CONNECTIONS_FOR_A6LIB
+                a6Serial.swap();
+                a6Serial.setDebugOutput(false);
+            #endif
         #endif
 		modemLastSpeed = baudRate;
 	}
