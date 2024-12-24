@@ -633,6 +633,11 @@ void FF_A6lib::openModem(long baudRate) {
                 a6Serial.setDebugOutput(false);
             #endif
         #endif
+        delay(1);
+        // Flush pending input chars
+        while (a6Serial.available()) {
+			a6Serial.read();
+        }
 		modemLastSpeed = baudRate;
 	}
 }
