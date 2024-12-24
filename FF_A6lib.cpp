@@ -2,7 +2,7 @@
 	\file
 	\brief	Implements a fully asynchronous SMS send/receive in PDU mode for A6/GA6 modem class
 	\author	Flying Domotic
-	\date	August 16th, 2023
+	\date	December 23rd, 2024
 */
 
 /*
@@ -16,14 +16,28 @@ Todo:
 #include <stdio.h>
 #include <FF_Trace.h>
 #include <SoftwareSerial.h>
-#define PM													// Define PDU tables in flash
+#define PM												    // Define PDU tables in flash
 #include <NtpClientLib.h>									// https://github.com/gmag11/NtpClient
 #include <pdulib.h>											// https://github.com/mgaman/PDUlib
 
 #define PDU_BUFFER_LENGTH 400								// Max workspace length
 PDU smsPdu = PDU(PDU_BUFFER_LENGTH);						// Instantiate PDU class
 
-SoftwareSerial a6Serial(-1, -1);							// We use software serial to keep Serial usable
+#ifdef USE_SOFTSERIAL_FOR_A6LIB                             // Define USE_SOFTSERIAL_FOR_A6LIB to use SofwareSerial instead of Serial
+                                                            // ************************** WARNING **************************
+                                                            //  This will cause interrupt problems (understand crashes)
+                                                            //      if used with asynchronous libraries (like async web server)
+                                                            // ************************** WARNING **************************
+    SoftwareSerial a6Serial;               					// We use software serial to keep Serial usable
+    #warning Using SoftwareSerial will crash when using other asynchronous librairies
+#else
+                                                            // ************************** WARNING **************************
+															//	Due to a bug, Serial.swap needed to swap TX/RX with D8/D7
+															//		doesn't work when setDebugOutput is set to true.
+															//		Be sure your revert it to false before doing the swap!!!
+                                                            // ************************** WARNING **************************
+    #define a6Serial Serial                                 // Use Serial for A6lib
+#endif
 
 // Class constructor : init some variables
 FF_A6lib::FF_A6lib() {
@@ -56,8 +70,8 @@ FF_A6lib::FF_A6lib() {
 	Open the modem connection at given baud rate
 
 	\param[in]	baudRate: modem speed (in bauds). Modem will be properly switched to this speed if needed
-	\param[in]	rxPin: ESP pin used to receive data from modem (connected to A6/GA6 UTX)
-	\param[in]	txPin: ESP pin used to send data to modem (connected to A6/GA6 URX)
+	\param[in]	rxPin: ESP pin used to receive data from modem (connected to A6/GA6 UTX, SoftwareSerial only)
+	\param[in]	txPin: ESP pin used to send data to modem (connected to A6/GA6 URX, SoftwareSerial only)
 	\return	none
 
 */
@@ -604,12 +618,14 @@ void FF_A6lib::openModem(long baudRate) {
 	// Don't reopen modem if speed is the good one
 	if (baudRate != modemLastSpeed) {
 		if (debugFlag) trace_debug_P("Opening modem at %d bds", baudRate);
-		// Close modem (as it'll probably already be in use)
-		a6Serial.end();
-		// Open modem at given speed
-		a6Serial.begin(baudRate, SWSERIAL_8N1, modemTxPin, modemRxPin, false, 250);	// Connect to Serial Software
-		// Enable TX interruption for speeds up to 19200 bds
-		a6Serial.enableIntTx((baudRate <= 19200));
+        #ifdef USE_SOFTSERIAL_FOR_A6LIB
+            // Open modem at given speed
+            a6Serial.begin(baudRate, SWSERIAL_8N1, modemTxPin, modemRxPin, false, 128);	// Connect to Serial Software
+            // Enable TX interruption for speeds up to 19200 bds
+            a6Serial.enableIntTx((baudRate <= 19200));
+        #else
+            a6Serial.begin(baudRate, SERIAL_8N1);
+        #endif
 		modemLastSpeed = baudRate;
 	}
 }
