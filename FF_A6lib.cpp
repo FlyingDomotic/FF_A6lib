@@ -13,23 +13,17 @@ Todo:
 */
 
 #include <FF_A6lib.h>
-#include <stdio.h>
 #include <FF_Trace.h>
-#include <SoftwareSerial.h>
-#define PM												    // Define PDU tables in flash
 #include <NtpClientLib.h>									// https://github.com/gmag11/NtpClient
 #include <pdulib.h>											// https://github.com/mgaman/PDUlib
 
-#define PDU_BUFFER_LENGTH 400								// Max workspace length
+#define PDU_BUFFER_LENGTH 1024								// Max workspace length
 PDU smsPdu = PDU(PDU_BUFFER_LENGTH);						// Instantiate PDU class
 
 #ifdef USE_SOFTSERIAL_FOR_A6LIB                             // Define USE_SOFTSERIAL_FOR_A6LIB to use SofwareSerial instead of Serial
-                                                            // ************************** WARNING **************************
-                                                            //  This will cause interrupt problems (understand crashes)
-                                                            //      if used with asynchronous libraries (like async web server)
-                                                            // ************************** WARNING **************************
+    #include <SoftwareSerial.h>
     SoftwareSerial a6Serial;               					// We use software serial to keep Serial usable
-    #warning Using SoftwareSerial will crash when using other asynchronous librairies
+    #warning Using SoftwareSerial may be unreliable at high speed!
 #else
     #define a6Serial Serial                                 // Use Serial for A6lib
     #ifdef USE_DIRECT_CONNECTIONS_FOR_A6LIB
@@ -44,9 +38,10 @@ PDU smsPdu = PDU(PDU_BUFFER_LENGTH);						// Instantiate PDU class
 
 // Class constructor : init some variables
 FF_A6lib::FF_A6lib() {
-	restartNeeded = true;
+	restartNeeded = false;
 	gsmStatus = A6_NEED_INIT;
 	restartReason = gsmStatus;
+	smsReady = false;
 	inReceive = false;
 	gsmIdle = A6_STARTING;
 	debugFlag = false;
@@ -64,6 +59,20 @@ FF_A6lib::FF_A6lib() {
 	lastSentNumber = PSTR("[none]");
 	lastSentDate = PSTR("[never]");
 	lastSentMessage = PSTR("[no message]");
+    ignoreErrors = false;
+    startTime = 0;
+    restartCount = 0;
+    nextStepCb = NULL;
+    readSmsCb = NULL;
+    recvLineCb = NULL;
+    index = 0;
+    gsmTimeout = 0;
+    inWait = false;
+    inWaitSmsReady = false;
+    memset(lastAnswer, 0, sizeof(lastAnswer));
+    memset(expectedAnswer, 0, sizeof(expectedAnswer));
+    memset(lastCommand, 0, sizeof(lastCommand));
+    smsMsgId = 0;
 }
 
 /*!
@@ -84,14 +93,13 @@ void FF_A6lib::begin(long baudRate, int8_t rxPin, int8_t txPin) {
 	inReceive = false;
 	inWait = false;
 	gsmIdle = A6_STARTING;
+    ignoreErrors = true;
 	// Save RX pin, TX pin and requested speed
 	modemRxPin = rxPin;
 	modemTxPin = txPin;
-	modemRequestedSpeed = baudRate;
 	// Open modem at requested speed initially
 	openModem(baudRate);
-	// find modem speed
-	findSpeed(&FF_A6lib::setReset);												// Find modem speed, then setReset
+    sendCommand("AT", &FF_A6lib::setReset);
 }
 
 /*!
@@ -108,7 +116,6 @@ void FF_A6lib::doLoop(void) {
 	if (traceFlag) enterRoutine(__func__);
 
 	// Read modem until \n (LF) character found, removing \r (CR)
-	if (a6Serial.available()) {
 		size_t answerLen = strlen(lastAnswer);				// Get answer length
 		while (a6Serial.available()) {
 			char c = a6Serial.read();
@@ -130,6 +137,7 @@ void FF_A6lib::doLoop(void) {
 					if (!smsReady && strstr(lastAnswer, SMS_READY_MSG)) {
 						if (debugFlag) trace_debug_P("Got SMS Ready", NULL);
 						smsReady = true;
+                    resetLastAnswer();
 						return;
 					}
 					if (inReceive) {						// Are we waiting for a command answer?
@@ -140,12 +148,12 @@ void FF_A6lib::doLoop(void) {
 							gsmStatus = A6_OK;
 							if (nextStepCb) {				// Do we have another callback to execute?
 								(this->*nextStepCb)();		// Yes, do it
-							} else {
+                            return;
+                        }
 								setIdle();					// No, we just finished.
-							}
 							return;
 						}
-						if (!ignoreErrors) {				// Should we ignore errors?
+                    if (!ignoreErrors) {
 							// No, check for CMS/CME error
 							if (strstr(lastAnswer,"+CMS ERROR") || strstr(lastAnswer,"+CME ERROR")) {
 								// This is a CMS or CME answer
@@ -173,11 +181,12 @@ void FF_A6lib::doLoop(void) {
 								readSmsHeader(lastAnswer);
 								resetLastAnswer();
 								inReceive = true;
+                            gsmTimeout = 2000;
 								startTime = millis();
 								return;
 							} else {								// Can't understand received data
 								if (debugFlag) trace_debug_P("Ignoring >%s<", lastAnswer);	// Display cleaned message
-								if (recvLineCb) recvLineCb(lastAnswer);		// Activate callback with answer
+                            if (recvLineCb) (*recvLineCb)(lastAnswer);	// Activate callback with answer
 									resetLastAnswer();
 								return;
 							}
@@ -196,9 +205,9 @@ void FF_A6lib::doLoop(void) {
 						gsmStatus = A6_OK;
 						if (nextStepCb) {				// Do we have another callback to execute?
 							(this->*nextStepCb)();		// Yes, do it
-						} else {
+                        return;
+                    }
 							setIdle();					// No, we just finished.
-						}
 						return;
 					}
 				}
@@ -212,16 +221,16 @@ void FF_A6lib::doLoop(void) {
 			#endif
 			}
 		}
-	}
 
 	if (inReceive) {										// We're waiting for a command answer
 		if ((millis() - startTime) >= gsmTimeout) {
 			if (ignoreErrors) {								// If errors should be ignored, call next step, if any
+				trace_error_P("Ignoring time out after %d ms, received >%s<, command was %s", millis() - startTime, lastAnswer, lastCommand);
 				if (nextStepCb) {							// Do we have another callback to execute?
 					(this->*nextStepCb)();					// Yes, do it
-				} else {
+                    return;
+                }
 					setIdle();								// No, we just finished.
-				}
 				return;
 			}
 			// Here, we've got a time-out on answer
@@ -250,9 +259,9 @@ void FF_A6lib::doLoop(void) {
 		gsmStatus = A6_OK;
 		if (nextStepCb) {								// Do we have another callback to execute?
 			(this->*nextStepCb)();						// Yes, do it
-		} else {
+            return;
+        }
 			setIdle();									// No, we just finished.
-		}
 		return;
 	}
 
@@ -263,9 +272,10 @@ void FF_A6lib::doLoop(void) {
 			gsmStatus = A6_OK;
 			if (nextStepCb) {								// Do we have another callback to execute?
 				(this->*nextStepCb)();						// Yes, do it
-			} else {
+                return;
+            }
 				setIdle();									// No, we just finished.
-			}
+            return;
 		}
 	}
 }
@@ -490,7 +500,7 @@ void FF_A6lib::deleteSMS(int index, int flag) {
 	char tempBuffer[50];
 
 	snprintf_P(tempBuffer, sizeof(tempBuffer), PSTR("AT+CMGD=%d,%d"), index, flag);
-	sendCommand(tempBuffer, &FF_A6lib::setIdle, DEFAULT_ANSWER, 10000);	// Wait up to 10 seconds for OK
+	sendCommand(tempBuffer, &FF_A6lib::setIdle, DEFAULT_ANSWER, 20000);	// Wait up to 20 seconds for OK
 }
 
 /*!
@@ -618,83 +628,23 @@ bool FF_A6lib::isReceiving(void){
 */
 void FF_A6lib::openModem(long baudRate) {
 	if (traceFlag) enterRoutine(__func__);
-	// Don't reopen modem if speed is the good one
-	if (baudRate != modemLastSpeed) {
 		if (debugFlag) trace_debug_P("Opening modem at %d bds", baudRate);
         #ifdef USE_SOFTSERIAL_FOR_A6LIB
             // Open modem at given speed
-            a6Serial.begin(baudRate, SWSERIAL_8N1, modemTxPin, modemRxPin, false, 128);	// Connect to Serial Software
+        a6Serial.begin(baudRate, SWSERIAL_8N1, modemTxPin, modemRxPin, false, MAX_SMS_NUMBER_LEN + 3);	// Connect to Serial Software
             // Enable TX interruption for speeds up to 19200 bds
             a6Serial.enableIntTx((baudRate <= 19200));
         #else
             a6Serial.begin(baudRate, SERIAL_8N1);
             #ifndef USE_DIRECT_CONNECTIONS_FOR_A6LIB
+            a6Serial.setDebugOutput(false);
                 a6Serial.swap();
-                a6Serial.setDebugOutput(false);
             #endif
         #endif
-        delay(1);
         // Flush pending input chars
         while (a6Serial.available()) {
 			a6Serial.read();
         }
-		modemLastSpeed = baudRate;
-	}
-}
-
-/*!
-
-	\brief	[Private] Modem initialization: find current modem speed
-
-	\param	none
-	\return	none
-
-*/
-void FF_A6lib::findSpeed(void (FF_A6lib::*nextStep)(void)) {
-	if (traceFlag) enterRoutine(__func__);
-	findSpeedCb = nextStep;									// Save nextStep to execute wfter speed determination
-	ignoreErrors = true;									// Ignore errors
-	speedsToTestIndex = -1;									// Init speed index
-	// Send attention command at current speed first
-	sendCommand("AT", &FF_A6lib::findSpeedAnswer, DEFAULT_ANSWER, 500);
-}
-
-/*!
-
-	\brief	[Private] Modem initialization: find current modem speed answer
-
-	\param	none
-	\return	none
-
-*/
-void FF_A6lib::findSpeedAnswer(void) {
-	if (traceFlag) enterRoutine(__func__);
-	// Was last answer the expected one?
-	if (!strstr(lastAnswer, expectedAnswer)) {
-		speedsToTestIndex++;
-		long modemSpeed = speedsToTest[speedsToTestIndex];	// Load next speed to test
-		// Is speed defined?
-		if (modemSpeed) {
-			// Open modem at test speed
-			openModem(modemSpeed);
-			// Send attention command
-			sendCommand("AT", &FF_A6lib::findSpeedAnswer, DEFAULT_ANSWER, 500);
-			return;
-		} else {
-			// No, open modem at requested speed
-			if (debugFlag) trace_info_P("Forcing modem at %d bds", modemRequestedSpeed);
-			openModem(modemRequestedSpeed);
-			sendCommand("AT", findSpeedCb);
-			return;
-		}
-	}
-	if (debugFlag) trace_info_P("Modem found at %d bds", modemLastSpeed);
-	// We're here with right or default speed, continue with next step
-	if (findSpeedCb) {
-		(this->*findSpeedCb)();						// Execute next step if defined
-	} else {
-		setIdle();									// Else, we just finished.
-	}
 }
 
 /*!
@@ -708,57 +658,14 @@ void FF_A6lib::findSpeedAnswer(void) {
 void FF_A6lib::setReset(void) {
 	if (traceFlag) enterRoutine(__func__);
 	resetCount++;
-	smsReady = false;
 	// Reset to factory defaults
-	sendCommand("AT&F", &FF_A6lib::setModemSpeed);
+	sendCommand("AT&F", &FF_A6lib::echoOff);
 }
 
 /*!
 
-	\brief	[Private] Modem initialization: set modem speed
-
-	\param	none
-	\return	none
-
-*/
-void FF_A6lib::setModemSpeed(void) {
-	if (traceFlag) enterRoutine(__func__);
-	// Is modem already at right speed?
-	if (modemLastSpeed == modemRequestedSpeed) {
-		// Skip +IPR if modem already at right speed
-		setSpeedComplete();
-	} else {
-		char tempBuffer[50];
-		snprintf_P(tempBuffer, sizeof(tempBuffer), PSTR("AT+IPR=%d"), modemRequestedSpeed);
-		// Set speed
-		sendCommand(tempBuffer, &FF_A6lib::setSpeedComplete);
-	}
-}
-
-/*!
-
-	\brief	[Private] Modem initialization: reopen modem after set speed
-
-	\param	none
-	\return	none
-
-*/
-void FF_A6lib::setSpeedComplete(void) {
 	if (traceFlag) enterRoutine(__func__);
 	ignoreErrors = false;
-	// Has modem speed been changed?
-	if (modemLastSpeed != modemRequestedSpeed) {
-		// Reopen modem at right speed after setModemSpeed
-		openModem(modemRequestedSpeed);
-		// Send attention to activate speed
-		sendCommand("AT", &FF_A6lib::echoOff);
-	} else {
-		echoOff();
-	}
-}
-
-/*!
-
 	\brief	[Private] Modem initialization: turn echo off
 
 	\param	none
@@ -841,6 +748,7 @@ void FF_A6lib::waitUntilSmsReady(void) {
 */
 void FF_A6lib::setCallerId(void) {
 	if (traceFlag) enterRoutine(__func__);
+    ignoreErrors = false;
 	// Set caller ID on
 	sendCommand("AT+CLIP=1", &FF_A6lib::setIndicOff);
 }
@@ -884,7 +792,7 @@ void FF_A6lib::setHeaderDetails(void) {
 void FF_A6lib::getSca(void) {
 	if (traceFlag) enterRoutine(__func__);
 	// Set encoding to 8 bits
-	sendCommand("AT+CSCA?", &FF_A6lib::gotSca, CSCA_INDICATOR);
+	sendCommand("AT+CSCA?", &FF_A6lib::gotSca, CSCA_INDICATOR, 10000);
 }
 
 /*!
@@ -905,7 +813,7 @@ void FF_A6lib::gotSca(void) {
 	ptrStart = strstr(lastAnswer, CSCA_INDICATOR);
 
 	if (ptrStart == NULL) {
-		if (debugFlag) trace_debug_P("Can't find %s in %s",CSCA_INDICATOR, lastAnswer);
+		trace_error_P("Can't find %s in %s",CSCA_INDICATOR, lastAnswer);
 		restartReason = A6_BAD_ANSWER;
 		restartNeeded = true;
 		return;
@@ -913,7 +821,7 @@ void FF_A6lib::gotSca(void) {
 	//	First token is +CSCA
 	char* token = strtok (ptrStart, "\"");
 	if (token == NULL) {
-		if (debugFlag) trace_debug_P("Can't find first token in %s", lastAnswer);
+		trace_error_P("Can't find first token in %s", lastAnswer);
 		restartReason = A6_BAD_ANSWER;
 		restartNeeded = true;
 		return;
@@ -922,7 +830,7 @@ void FF_A6lib::gotSca(void) {
 	// Second token is is SCA number
 	token = strtok (NULL, "\"");
 	if (token == NULL) {
-		if (debugFlag) trace_debug_P("Can't find second token in %s", lastAnswer);
+		trace_error_P("Can't find second token in %s", lastAnswer);
 		restartReason = A6_BAD_ANSWER;
 		restartNeeded = true;
 		return;
@@ -934,7 +842,7 @@ void FF_A6lib::gotSca(void) {
 		if (scaNumber[i] < '0' || scaNumber[i] > '9') {
 			// First char could be '+'
 			if (scaNumber[0] != '+' || i != 0) {
-				if (debugFlag) trace_debug_P("Bad SCA number %s", scaNumber);
+				trace_error_P("Bad SCA number %s at %d", scaNumber, i+1);
 				restartReason = A6_BAD_ANSWER;
 				restartNeeded = true;
 				return;
@@ -944,7 +852,7 @@ void FF_A6lib::gotSca(void) {
 	if (debugFlag) trace_debug_P("setting SCA to %s", scaNumber);
 	smsPdu.setSCAnumber(scaNumber);
 	resetLastAnswer();
-	sendCommand("", &FF_A6lib::deleteReadSent);
+	deleteReadSent();
 }
 
 /*!
@@ -999,21 +907,6 @@ void FF_A6lib::sendSMStext(void) {
 
 /*!
 
-	\brief	[Private] Call SMS received callback routine
-
-	\param	none
-	\return	none
-
-*/
-void FF_A6lib::executeSmsCb(void) {
-	if (traceFlag) enterRoutine(__func__);
-	if (readSmsCb) {
-		(*readSmsCb)(index, lastReceivedNumber.c_str(), lastReceivedDate.c_str(), lastReceivedMessage.c_str());
-	}
-}
-
-/*!
-
 	\brief	[Private] Wait for SMS ready message a given time
 
 	\param[in]	waitMs: Time (ms) to wait for SMS ready message
@@ -1035,27 +928,6 @@ void FF_A6lib::waitSmsReady(unsigned long waitMs, void (FF_A6lib::*nextStep)(voi
 
 /*!
 
-	\brief	[Private] Wait a given time
-
-	\param[in]	waitMs: Time (ms) to wait
-	\param[in]	nextStep: Routine to call as next step in sequence
-	\return	none
-
-*/
-void FF_A6lib::waitMillis(unsigned long waitMs, void (FF_A6lib::*nextStep)(void)) {
-	if (traceFlag) enterRoutine(__func__);
-	if (debugFlag) trace_debug_P("Waiting for %d ms", waitMs);
-	gsmTimeout = waitMs;
-	gsmStatus = A6_RUNNING;
-	nextStepCb = nextStep;
-	startTime = millis();
-	inReceive = false;
-	inWait = true;
-	inWaitSmsReady = false;
-}
-
-/*!
-
 	\brief	[Private] Sends a (char*) command
 
 	\param[in]	command: Command to send (char*). If empty, will wait for answer of a previously sent command
@@ -1068,7 +940,6 @@ void FF_A6lib::waitMillis(unsigned long waitMs, void (FF_A6lib::*nextStep)(void)
 void FF_A6lib::sendCommand(const char *command, void (FF_A6lib::*nextStep)(void), const char *resp, unsigned long cdeTimeout) {
 	if (traceFlag) enterRoutine(__func__);
 	commandCount++;
-	delay(100);
 	gsmTimeout = cdeTimeout;
 	gsmStatus = A6_RUNNING;
 	nextStepCb = nextStep;
@@ -1188,7 +1059,7 @@ void FF_A6lib::readSmsMessage(const char* msg) {
 		lastReceivedMessage = String(smsPdu.getText());
 		smsForwardedCount++;
 		if (debugFlag) trace_debug_P("Got SMS from %s, sent at %s, >%s<", lastReceivedNumber.c_str(), lastReceivedDate.c_str(), lastReceivedMessage.c_str());
-		executeSmsCb();
+        if (readSmsCb) (*readSmsCb)(index, lastReceivedNumber.c_str(), lastReceivedDate.c_str(), lastReceivedMessage.c_str());
 	} else {
 		trace_error_P("SMS PDU decode failed", NULL);
 	}

@@ -16,7 +16,7 @@
 // Constants
 #define A6_CMD_TIMEOUT 4000									//!< Standard AT command timeout (ms)
 #define MAX_SMS_NUMBER_LEN 20								//!< SMS number max length
-#define MAX_ANSWER 200										//!< AT command answer max length
+#define MAX_ANSWER 500										//!< AT command answer max length
 #define DEFAULT_ANSWER "OK"									//!< AT command default answer
 #define SMS_READY_MSG "SMS Ready"							//!< SMS ready signal
 #define SMS_INDICATOR "+CMT: "								//!< SMS received indicator
@@ -105,13 +105,9 @@ private:
 	void sendCommand(const uint8_t command, void (FF_A6lib::*nextStep)(void)=NULL, const char *resp=DEFAULT_ANSWER, unsigned long cdeTimeout = A6_CMD_TIMEOUT);
 	void waitMillis(unsigned long waitMs, void (FF_A6lib::*nextStep)(void)=NULL);
 	void waitSmsReady(unsigned long waitMs, void (FF_A6lib::*nextStep)(void)=NULL);
-	void findSpeed(void (FF_A6lib::*nextStep)(void)=NULL);
 	void sendNextSmsChunk(void);
-	void findSpeedAnswer(void);
 	void openModem(long baudRate);
 	void setReset(void);
-	void setModemSpeed(void);
-	void setSpeedComplete(void);
 	void echoOff(void);
 	void detailedErrors(void);
 	void setCallerId(void);
@@ -126,7 +122,6 @@ private:
 	void initComplete(void);
 	void sendSMStext(void);
 	void setIdle(void);
-	void executeSmsCb(void);
 	void enterRoutine(const char* routineName);
 	void readSmsHeader(const char* msg);
 	void readSmsMessage(const char* msg);
@@ -144,7 +139,6 @@ private:
 	int8_t modemTxPin;										//!< Modem TX pin
 	bool smsReady;											//!< True if "SMS ready" seen
 	void (FF_A6lib::*nextStepCb)(void);						//!< Callback for next step in command execution
-	void (FF_A6lib::*findSpeedCb)(void);					//!< Callback for next step in speed determination
 	void (*readSmsCb)(int __index, const char* __number, const char* __date, const char* __message); //!< Callback for readSMS
 	void (*recvLineCb)(const char* __answer);				//!< Callback for received line
 	int index;												//!< Index of last read SMS
@@ -160,10 +154,6 @@ private:
 	char lastAnswer[MAX_ANSWER];							//!< Contains the last GSM command anwser
 	char expectedAnswer[10];								//!< Expected answer to consider command ended
 	char lastCommand[30];									//!< Last command sent
-	long modemRequestedSpeed;								//!< Modem requested speed
-	long modemLastSpeed;									//!< Last speed used to open modem
-	long speedsToTest[6] = {115200,19200,9600,2400,1200,0};	//!< Modem speeds to test
-	int speedsToTestIndex;									//!< Index into speedToText
 	uint16_t gsm7Length;									//!< Size of GSM-7 message (0 for UCS-2 messages)
 	unsigned short smsMsgId;								//!< Multi-part message ID (to be incremented for each multi-part message sent)
 	uint8_t smsMsgIndex;									//!< Chunk index of current multi-part message
