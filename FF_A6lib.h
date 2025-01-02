@@ -80,6 +80,7 @@ public:
 	void sendAT(const char* command);
 	void sendEOF(void);
 	bool needRestart(void);
+    int getRestartReason(void);
 	void setRestart(bool restartFlag);
 	bool isIdle(void);
 	bool isSending(void);

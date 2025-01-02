@@ -649,6 +649,18 @@ void FF_A6lib::openModem(long baudRate) {
 
 /*!
 
+	\brief	Return restart reason
+
+	\param	none
+	\return	restart reason
+
+*/
+int FF_A6lib::getRestartReason(void) {
+    return restartReason;
+}
+
+/*!
+
 	\brief	[Private] Modem initialization: reset modem to factory defaults
 
 	\param	none
