@@ -14,7 +14,9 @@ Todo:
 
 #include <FF_A6lib.h>
 #include <FF_Trace.h>
-#include <NtpClientLib.h>									// https://github.com/gmag11/NtpClient
+#ifdef ESP8266
+    #include <NtpClientLib.h>									// https://github.com/gmag11/NtpClient
+#endif
 #include <pdulib.h>											// https://github.com/mgaman/PDUlib
 
 #define PDU_BUFFER_LENGTH 1024								// Max workspace length
@@ -376,8 +378,12 @@ void FF_A6lib::sendSMS(const char* number, const char* text) {
 	// Save last used number and message
 	lastSentNumber = String(number);
 	lastSentMessage = String(text);
-	lastSentDate = NTP.getDateStr() + " " + NTP.getTimeStr();
-	//lastSentDate = "xxxx-xx-xx xx:xx:xx";
+	#ifdef ESP8266
+        lastSentDate = NTP.getDateStr() + " " + NTP.getTimeStr();
+    #endif
+	#ifdef ESP32
+    	lastSentDate = "xxxx-xx-xx xx:xx:xx";
+    #endif
 	// Send first (or only) SMS part
 	if (smsMsgCount == 0) {
 		sendOneSmsChunk(number, text);
@@ -556,15 +562,6 @@ void FF_A6lib::sendEOF(void) {
 bool FF_A6lib::needRestart(void){
 	if (traceFlag) enterRoutine(__func__);
 	return restartNeeded;
-}
-
-/*!
-
-
-*/
-int FF_A6lib::getRestartReason(void) {
-	if (traceFlag) enterRoutine(__func__);
-	return restartReason;
 }
 
 /*!
