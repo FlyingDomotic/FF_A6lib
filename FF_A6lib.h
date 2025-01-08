@@ -104,7 +104,6 @@ private:
 	// Private routines (documented in FF_A6lib.cpp)
 	void sendCommand(const char *command, void (FF_A6lib::*nextStep)(void)=NULL, const char *resp=DEFAULT_ANSWER, unsigned long cdeTimeout = A6_CMD_TIMEOUT);
 	void sendCommand(const uint8_t command, void (FF_A6lib::*nextStep)(void)=NULL, const char *resp=DEFAULT_ANSWER, unsigned long cdeTimeout = A6_CMD_TIMEOUT);
-	void waitMillis(unsigned long waitMs, void (FF_A6lib::*nextStep)(void)=NULL);
 	void waitSmsReady(unsigned long waitMs, void (FF_A6lib::*nextStep)(void)=NULL);
 	void sendNextSmsChunk(void);
 	void openModem(long baudRate);

@@ -25,14 +25,12 @@ PDU smsPdu = PDU(PDU_BUFFER_LENGTH);						// Instantiate PDU class
     SoftwareSerial a6Serial;               					// We use software serial to keep Serial usable
     #warning Using SoftwareSerial may be unreliable at high speed!
 #else
+    #if defined(USE_SERIAL1_FOR_A6LIB)
+        #define a6Serial Serial1							// Use Serial1
+	#elif deined(USE_SERIAL2_FOR_A6LIB)
+		#define a6Serial Serial2							// Use Serial2
+    #else
     #define a6Serial Serial                                 // Use Serial for A6lib
-    #ifdef USE_DIRECT_CONNECTIONS_FOR_A6LIB
-                                                            // ************************** WARNING **************************
-															//	Due to a bug, Serial.swap needed to swap TX/RX with D8/D7
-															//		doesn't work when setDebugOutput is set to true.
-															//		Use direct connections instead of swap.
-                                                            // ************************** WARNING **************************
-        #warning "Serial.swap() and Serial.setDebugOutput(false) won't be used - Be sure you connected A6 on RX/TX"
     #endif
 #endif
 
@@ -89,6 +87,7 @@ FF_A6lib::FF_A6lib() {
 */
 void FF_A6lib::begin(long baudRate, int8_t rxPin, int8_t txPin) {
 	if (traceFlag) enterRoutine(__func__);
+	trace_debug_P("A6lib begin", NULL);
 	restartNeeded = false;
 	inReceive = false;
 	inWait = false;
@@ -378,6 +377,7 @@ void FF_A6lib::sendSMS(const char* number, const char* text) {
 	lastSentNumber = String(number);
 	lastSentMessage = String(text);
 	lastSentDate = NTP.getDateStr() + " " + NTP.getTimeStr();
+	//lastSentDate = "xxxx-xx-xx xx:xx:xx";
 	// Send first (or only) SMS part
 	if (smsMsgCount == 0) {
 		sendOneSmsChunk(number, text);
@@ -560,6 +560,15 @@ bool FF_A6lib::needRestart(void){
 
 /*!
 
+
+*/
+int FF_A6lib::getRestartReason(void) {
+	if (traceFlag) enterRoutine(__func__);
+	return restartReason;
+}
+
+/*!
+
 	\brief	Set the restart flag
 
 	This routine sets the restart required flag to a given value
@@ -631,12 +640,13 @@ void FF_A6lib::openModem(long baudRate) {
 		if (debugFlag) trace_debug_P("Opening modem at %d bds", baudRate);
         #ifdef USE_SOFTSERIAL_FOR_A6LIB
             // Open modem at given speed
-        a6Serial.begin(baudRate, SWSERIAL_8N1, modemTxPin, modemRxPin, false, MAX_SMS_NUMBER_LEN + 3);	// Connect to Serial Software
+        a6Serial.begin(baudRate, SWSERIAL_8N1, modemTxPin, modemRxPin, false, MAX_ANSWER + 3);	// Connect to Serial Software
             // Enable TX interruption for speeds up to 19200 bds
             a6Serial.enableIntTx((baudRate <= 19200));
         #else
             a6Serial.begin(baudRate, SERIAL_8N1);
-            #ifndef USE_DIRECT_CONNECTIONS_FOR_A6LIB
+			#if !defined(USE_SERIAL1_FOR_A6LIB) && !defined(USE_SERIAL2_FOR_A6LIB)
+				// We're on Serial, disable debug output to be able to swap Serial to D8/D7
             a6Serial.setDebugOutput(false);
                 a6Serial.swap();
             #endif
@@ -645,6 +655,7 @@ void FF_A6lib::openModem(long baudRate) {
         while (a6Serial.available()) {
 			a6Serial.read();
         }
+        smsReady = false;
 }
 
 /*!
@@ -1007,6 +1018,7 @@ void FF_A6lib::sendCommand(const uint8_t command, void (FF_A6lib::*nextStep)(voi
 */
 void FF_A6lib::setIdle(void) {
 	if (traceFlag) enterRoutine(__func__);
+	trace_debug_P("Modem is idle", NULL);
 	gsmIdle = A6_IDLE;
 	inReceive = false;
 	resetLastAnswer();
