@@ -551,7 +551,7 @@ void FF_A6lib::sendEOF(void) {
 
 /*!
 
-	\brief	Check if modem shoudl be restarted
+	\brief	Check if modem should be restarted
 
 	This routine check if modem restart has been asked by code.
 
