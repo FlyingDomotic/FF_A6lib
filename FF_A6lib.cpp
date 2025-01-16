@@ -29,7 +29,7 @@ PDU smsPdu = PDU(PDU_BUFFER_LENGTH);						// Instantiate PDU class
 #else
     #if defined(USE_SERIAL1_FOR_A6LIB)
         #define a6Serial Serial1							// Use Serial1
-	#elif deined(USE_SERIAL2_FOR_A6LIB)
+	#elif defined(USE_SERIAL2_FOR_A6LIB)
 		#define a6Serial Serial2							// Use Serial2
     #else
     #define a6Serial Serial                                 // Use Serial for A6lib
