@@ -154,7 +154,7 @@ void FF_A6lib::doLoop(void) {
 								setIdle();					// No, we just finished.
 							return;
 						}
-                    if (!ignoreErrors) {
+                        if (!ignoreErrors) {                        // Should we ignore errors?
 							// No, check for CMS/CME error
 							if (strstr(lastAnswer,"+CMS ERROR") || strstr(lastAnswer,"+CME ERROR")) {
 								// This is a CMS or CME answer
