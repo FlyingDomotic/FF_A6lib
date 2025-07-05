@@ -15,7 +15,7 @@ Todo:
 #include <FF_A6lib.h>
 #include <FF_Trace.h>
 #ifdef ESP8266
-    #include <NtpClientLib.h>									// https://github.com/gmag11/NtpClient
+    #include <NtpClientLib.h>								// https://github.com/gmag11/NtpClient
 #endif
 #include <pdulib.h>											// https://github.com/mgaman/PDUlib
 
@@ -812,7 +812,7 @@ void FF_A6lib::setHeaderDetails(void) {
 void FF_A6lib::getSca(void) {
 	if (traceFlag) enterRoutine(__func__);
 	// Set encoding to 8 bits
-	sendCommand("AT+CSCA?", &FF_A6lib::gotSca, CSCA_INDICATOR, 10000);
+	sendCommand("AT+CSCA?", &FF_A6lib::gotSca, CSCA_INDICATOR, 15000);
 }
 
 /*!
@@ -886,7 +886,7 @@ void FF_A6lib::gotSca(void) {
 void FF_A6lib::deleteReadSent(void) {
 	if (traceFlag) enterRoutine(__func__);
 	// Delete read or sent SMS
-	sendCommand("AT+CMGD=1,4", &FF_A6lib::initComplete, DEFAULT_ANSWER, 10000);
+	sendCommand("AT+CMGD=1,4", &FF_A6lib::initComplete, DEFAULT_ANSWER, 15000);
 }
 
 /*!
@@ -922,7 +922,7 @@ void FF_A6lib::sendSMStext(void) {
 
 	if (debugFlag) trace_debug_P("Message: %s", smsPdu.getSMS());
 	a6Serial.write(smsPdu.getSMS());
-	sendCommand(0x1a, &FF_A6lib::sendNextSmsChunk, "+CMGS:", 10000);
+	sendCommand(0x1a, &FF_A6lib::sendNextSmsChunk, "+CMGS:", 15000);
 }
 
 /*!
